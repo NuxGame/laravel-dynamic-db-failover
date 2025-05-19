@@ -1,5 +1,5 @@
 {
-    "name": "failover-solutions/laravel-dynamic-db-failover",
+    "name": "nuxgame/laravel-dynamic-db-failover",
     "description": "A Laravel package to dynamically manage database failover between a primary and a failover connection, with a limited functionality mode.",
     "type": "library",
     "license": "MIT",
@@ -14,13 +14,13 @@
     },
     "autoload": {
         "psr-4": {
-            "FailoverSolutions\\LaravelDynamicDBFailover\\": "src/"
+            "Nuxgame\\LaravelDynamicDBFailover\\": "src/"
         }
     },
     "extra": {
         "laravel": {
             "providers": [
-                "FailoverSolutions\\LaravelDynamicDBFailover\\DynamicDBFailoverServiceProvider"
+                "Nuxgame\\LaravelDynamicDBFailover\\DynamicDBFailoverServiceProvider"
             ]
         }
     },

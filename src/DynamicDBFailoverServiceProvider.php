@@ -1,6 +1,6 @@
 <?php
 
-namespace FailoverSolutions\LaravelDynamicDBFailover;
+namespace Nuxgame\LaravelDynamicDBFailover;
 
 use Illuminate\Support\ServiceProvider;
 
