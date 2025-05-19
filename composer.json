@@ -1,29 +1,38 @@
 {
     "name": "nuxgame/laravel-dynamic-db-failover",
-    "description": "A Laravel package to dynamically manage database failover between a primary and a failover connection, with a limited functionality mode.",
+    "description": "Dynamically fails over database connections in Laravel.",
     "type": "library",
     "license": "MIT",
     "authors": [
         {
             "name": "Your Name",
-            "email": "your.email@example.com"
+            "email": "your@email.com"
         }
     ],
     "require": {
-        "php": "^8.2"
+        "php": "^8.2",
+        "illuminate/support": "^10.0 || ^11.0",
+        "illuminate/database": "^10.0 || ^11.0",
+        "illuminate/contracts": "^10.0 || ^11.0",
+        "illuminate/console": "^10.0 || ^11.0",
+        "illuminate/log": "^10.0 || ^11.0",
+        "illuminate/cache": "^10.0 || ^11.0",
+        "illuminate/events": "^10.0 || ^11.0"
     },
     "autoload": {
         "psr-4": {
             "Nuxgame\\LaravelDynamicDBFailover\\": "src/"
         }
     },
-    "extra": {
-        "laravel": {
-            "providers": [
-                "Nuxgame\\LaravelDynamicDBFailover\\DynamicDBFailoverServiceProvider"
-            ]
+    "autoload-dev": {
+        "psr-4": {
+            "Nuxgame\\LaravelDynamicDBFailover\\Tests\\": "tests/"
         }
     },
     "minimum-stability": "dev",
-    "prefer-stable": true
+    "prefer-stable": true,
+    "require-dev": {
+        "mockery/mockery": "^1.5",
+        "phpunit/phpunit": "^9.5 || ^10.0 || ^11.0"
+    }
 }
