@@ -3,6 +3,8 @@
 namespace Nuxgame\LaravelDynamicDBFailover;
 
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Database\DatabaseManager;
+use Nuxgame\LaravelDynamicDBFailover\Database\BlockingConnection;
 
 class DynamicDBFailoverServiceProvider extends ServiceProvider
 {
@@ -17,6 +19,24 @@ class DynamicDBFailoverServiceProvider extends ServiceProvider
         $this->mergeConfigFrom(
             __DIR__.'/../config/dynamic_db_failover.php', 'dynamic_db_failover'
         );
+
+        // Регистрация кастомного драйвера базы данных 'blocking'
+        $this->app->resolving('db', function (DatabaseManager $db) {
+            $db->extend('blocking', function ($config, $name) {
+                // $config содержит массив конфигурации для этого соединения из config/database.php
+                // $name содержит имя соединения (например, 'blocking_connection')
+
+                // Поскольку BlockingConnection не использует реальное PDO, мы можем передать null
+                // или фиктивный объект, который он ожидает в конструкторе.
+                // Конструктор BlockingConnection ожидает $pdo, $database, $tablePrefix, $config.
+                // $config['name'] = $name; // Можно добавить имя соединения в конфиг, если нужно внутри BlockingConnection
+
+                // Заглушка для PDO, так как BlockingConnection его не использует по-настоящему.
+                $pdoDummy = new \stdClass();
+
+                return new BlockingConnection($pdoDummy, $config['database'], $config['prefix'], $config);
+            });
+        });
     }
 
     /**
