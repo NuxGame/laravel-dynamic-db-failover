@@ -5,7 +5,7 @@ namespace Nuxgame\LaravelDynamicDBFailover\Services;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Database\DatabaseManager as DB;
 use Illuminate\Support\Facades\Log;
-use Nuxgame\LaravelDynamicDBFailover\Constants\ConnectionStatus;
+use Nuxgame\LaravelDynamicDBFailover\Enums\ConnectionStatus;
 use Nuxgame\LaravelDynamicDBFailover\HealthCheck\ConnectionStateManager;
 use Nuxgame\LaravelDynamicDBFailover\Events\DatabaseConnectionSwitchedEvent;
 use Nuxgame\LaravelDynamicDBFailover\Events\LimitedFunctionalityModeActivatedEvent;

@@ -7,7 +7,7 @@ use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
-use Nuxgame\LaravelDynamicDBFailover\Constants\ConnectionStatus;
+use Nuxgame\LaravelDynamicDBFailover\Enums\ConnectionStatus;
 use Nuxgame\LaravelDynamicDBFailover\Events\ConnectionDownEvent;
 use Nuxgame\LaravelDynamicDBFailover\Events\ConnectionHealthyEvent;
 use Nuxgame\LaravelDynamicDBFailover\Events\CacheUnavailableEvent;

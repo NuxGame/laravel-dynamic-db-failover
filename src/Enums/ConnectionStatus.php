@@ -1,6 +1,6 @@
 <?php
 
-namespace Nuxgame\LaravelDynamicDBFailover\Constants;
+namespace Nuxgame\LaravelDynamicDBFailover\Enums;
 
 enum ConnectionStatus: string
 {
