@@ -1,0 +1,35 @@
+{
+    "name": "failover-solutions/laravel-dynamic-db-failover",
+    "description": "A Laravel package to dynamically manage database failover between a primary and a failover connection, with a limited functionality mode.",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Your Name",
+            "email": "your.email@example.com"
+        }
+    ],
+    "require": {
+        "php": "^8.2",
+        "illuminate/support": "^11.0",
+        "illuminate/database": "^11.0",
+        "illuminate/console": "^11.0",
+        "illuminate/events": "^11.0",
+        "illuminate/log": "^11.0",
+        "illuminate/cache": "^11.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "FailoverSolutions\\LaravelDynamicDBFailover\\": "src/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "FailoverSolutions\\LaravelDynamicDBFailover\\DynamicDBFailoverServiceProvider"
+            ]
+        }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}
