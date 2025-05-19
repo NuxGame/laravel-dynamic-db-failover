@@ -35,9 +35,13 @@ class DatabaseFailoverManager
         $this->db = $db;
         $this->events = $events;
 
-        $this->primaryConnectionName = $this->config->get('dynamic_db_failover.connections.primary');
-        $this->failoverConnectionName = $this->config->get('dynamic_db_failover.connections.failover');
-        $this->blockingConnectionName = $this->config->get('dynamic_db_failover.connections.blocking');
+        $this->primaryConnectionName = $this->config->get('dynamic_db_failover.connections.primary', 'mysql');
+        $this->failoverConnectionName = $this->config->get('dynamic_db_failover.connections.failover', 'mysql_failover');
+        $this->blockingConnectionName = $this->config->get('dynamic_db_failover.connections.blocking', 'blocking');
+
+        if (empty($this->primaryConnectionName) || empty($this->failoverConnectionName) || empty($this->blockingConnectionName)) {
+            Log::warning('DynamicDBFailover: One or more connection names (primary, failover, blocking) are not configured correctly. Please check your dynamic_db_failover.php config file.');
+        }
     }
 
     /**

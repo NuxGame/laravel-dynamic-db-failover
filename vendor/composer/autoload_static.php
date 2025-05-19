@@ -22,6 +22,7 @@ class ComposerStaticInitd641beb8c8b1931aa986ffcec31c2b1f
 
     public static $classMap = array (
         'Composer\\InstalledVersions' => __DIR__ . '/..' . '/composer/InstalledVersions.php',
+        'Nuxgame\\LaravelDynamicDBFailover\\Console\\Commands\\CheckDatabaseHealthCommand' => __DIR__ . '/../..' . '/src/Console/Commands/CheckDatabaseHealthCommand.php',
         'Nuxgame\\LaravelDynamicDBFailover\\Constants\\ConnectionStatus' => __DIR__ . '/../..' . '/src/Constants/ConnectionStatus.php',
         'Nuxgame\\LaravelDynamicDBFailover\\Database\\BlockingConnection' => __DIR__ . '/../..' . '/src/Database/BlockingConnection.php',
         'Nuxgame\\LaravelDynamicDBFailover\\DynamicDBFailoverServiceProvider' => __DIR__ . '/../..' . '/src/DynamicDBFailoverServiceProvider.php',

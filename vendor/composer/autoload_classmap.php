@@ -7,6 +7,7 @@ $baseDir = dirname($vendorDir);
 
 return array(
     'Composer\\InstalledVersions' => $vendorDir . '/composer/InstalledVersions.php',
+    'Nuxgame\\LaravelDynamicDBFailover\\Console\\Commands\\CheckDatabaseHealthCommand' => $baseDir . '/src/Console/Commands/CheckDatabaseHealthCommand.php',
     'Nuxgame\\LaravelDynamicDBFailover\\Constants\\ConnectionStatus' => $baseDir . '/src/Constants/ConnectionStatus.php',
     'Nuxgame\\LaravelDynamicDBFailover\\Database\\BlockingConnection' => $baseDir . '/src/Database/BlockingConnection.php',
     'Nuxgame\\LaravelDynamicDBFailover\\DynamicDBFailoverServiceProvider' => $baseDir . '/src/DynamicDBFailoverServiceProvider.php',
