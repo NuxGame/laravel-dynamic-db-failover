@@ -70,33 +70,33 @@ class DatabaseFailoverManager
      */
     protected function resolveActiveConnection(): string
     {
+        $primaryConnectionNameStr = $this->primaryConnectionName; // for logging
+        $failoverConnectionNameStr = $this->failoverConnectionName; // for logging
+
         $primaryStatus = $this->stateManager->getConnectionStatus($this->primaryConnectionName);
         $failoverStatus = $this->stateManager->getConnectionStatus($this->failoverConnectionName);
 
         // Handle cache unavailability scenario - default to primary
+        // If both are UNKNOWN and have 0 failure counts, it might indicate cache issues.
         if ($primaryStatus === ConnectionStatus::UNKNOWN && $this->stateManager->getFailureCount($this->primaryConnectionName) === 0 &&
             $failoverStatus === ConnectionStatus::UNKNOWN && $this->stateManager->getFailureCount($this->failoverConnectionName) === 0) {
-            // This could indicate cache is down, as no status or failure count is recorded.
-            // Defaulting to primary as per requirements.
-            Log::warning("Cache might be unavailable. Defaulting to primary connection '{$this->primaryConnectionName}'.");
+            Log::warning("Cache might be unavailable or statuses not yet determined. Defaulting to primary connection '{$primaryConnectionNameStr}'.");
             return $this->primaryConnectionName;
         }
 
         if ($primaryStatus === ConnectionStatus::HEALTHY) {
-            Log::debug("Primary connection '{$this->primaryConnectionName}' is HEALTHY. Setting as active.");
+            Log::debug("Primary connection '{$primaryConnectionNameStr}' is HEALTHY. Setting as active.");
             return $this->primaryConnectionName;
         }
 
-        // Primary is not healthy (DOWN or UNKNOWN with failures)
-        Log::warning("Primary connection '{$this->primaryConnectionName}' is not healthy (Status: {$primaryStatus}). Checking failover.");
+        Log::warning("Primary connection '{$primaryConnectionNameStr}' is not healthy (Status: {$primaryStatus->value}). Checking failover.");
 
         if ($failoverStatus === ConnectionStatus::HEALTHY) {
-            Log::info("Failover connection '{$this->failoverConnectionName}' is HEALTHY. Setting as active.");
+            Log::info("Failover connection '{$failoverConnectionNameStr}' is HEALTHY. Setting as active.");
             return $this->failoverConnectionName;
         }
 
-        // Both primary and failover are not healthy
-        Log::error("Both primary ('{$this->primaryConnectionName}' - Status: {$primaryStatus}) and failover ('{$this->failoverConnectionName}' - Status: {$failoverStatus}) connections are unavailable. Activating blocking connection.");
+        Log::error("Both primary ('{$primaryConnectionNameStr}' - Status: {$primaryStatus->value}) and failover ('{$failoverConnectionNameStr}' - Status: {$failoverStatus->value}) connections are unavailable. Activating blocking connection.");
         return $this->blockingConnectionName;
     }
 
@@ -117,8 +117,6 @@ class DatabaseFailoverManager
     {
         Log::info("Forcing switch to primary connection: {$this->primaryConnectionName}");
         $this->stateManager->setConnectionStatus($this->primaryConnectionName, ConnectionStatus::UNKNOWN, 0);
-        // Optionally reset failover status too if desired logic
-        // $this->stateManager->setConnectionStatus($this->failoverConnectionName, ConnectionStatus::UNKNOWN, 0);
         $this->determineAndSetConnection();
     }
 
