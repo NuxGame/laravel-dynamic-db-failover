@@ -5,6 +5,17 @@
 return [
     /*
     |--------------------------------------------------------------------------
+    | Enable Dynamic DB Failover
+    |--------------------------------------------------------------------------
+    |
+    | Set this to false to completely disable the dynamic failover logic.
+    | Useful for specific environments or during maintenance.
+    |
+    */
+    'enabled' => env('DYNAMIC_DB_FAILOVER_ENABLED', true),
+
+    /*
+    |--------------------------------------------------------------------------
     | Primary Database Connection Name
     |--------------------------------------------------------------------------
     |
@@ -81,7 +92,7 @@ return [
 
         // Time-to-live for cache entries in seconds.
         // Should generally be longer than the health check interval.
-        'ttl_seconds' => 300,
+        'ttl_seconds' => env('DYNAMIC_DB_FAILOVER_CACHE_TTL_SECONDS', 300), // 5 minutes
     ],
 
     /*
@@ -96,4 +107,31 @@ return [
     */
     'default_to_primary_on_cache_unavailable' => true,
 
+    /*
+    |--------------------------------------------------------------------------
+    | Cache Tag
+    |--------------------------------------------------------------------------
+    |
+    | A cache tag to apply to all failover related cache items, if the
+    | cache driver supports tagging. This allows for easier clearing of
+    | all failover related cache entries.
+    |
+    */
+    'tag' => 'dynamic-db-failover',
+
+    /*
+    |--------------------------------------------------------------------------
+    | Health Check Schedule
+    |--------------------------------------------------------------------------
+    |
+    | Configure how often the `failover:health-check` command should run.
+    | This is a cron expression string. Default is every minute.
+    | You need to add this command to your Laravel application's console kernel.
+    |
+    | Example Kernel entry:
+    |   $schedule->command('failover:health-check')
+    |            ->cron(config('dynamic_db_failover.health_check.schedule_cron', '* * * * *'));
+    |
+    */
+    'health_check_schedule_cron' => env('DYNAMIC_DB_FAILOVER_HEALTH_CHECK_CRON', '* * * * *'),
 ];
