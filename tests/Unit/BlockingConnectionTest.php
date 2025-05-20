@@ -89,4 +89,14 @@ class BlockingConnectionTest extends TestCase
         });
         $this->assertEquals([], $result);
     }
+
+    protected function tearDown(): void
+    {
+        // MockeryPHPUnitIntegration should handle this, but explicit call for safety
+        \Mockery::close();
+        // No parent::tearDown() if extending PHPUnit\Framework\TestCase directly
+        // and not Orchestra\Testbench\TestCase, unless PHPUnit\Framework\TestCase has its own.
+        // It does, so we call it.
+        parent::tearDown();
+    }
 }

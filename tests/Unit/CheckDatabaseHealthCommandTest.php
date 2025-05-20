@@ -46,6 +46,14 @@ class CheckDatabaseHealthCommandTest extends TestCase
         $app->instance(ConnectionStateManager::class, $this->connectionStateManagerMock);
     }
 
+    protected function tearDown(): void
+    {
+        $this->app->forgetInstance(ConnectionStateManager::class);
+        // MockeryPHPUnitIntegration should handle this, but explicit call for safety
+        \Mockery::close();
+        parent::tearDown();
+    }
+
     public function test_command_updates_status_for_all_connections_by_default(): void
     {
         $this->connectionStateManagerMock

@@ -7,9 +7,11 @@ use Illuminate\Database\DatabaseManager as DB;
 use Illuminate\Support\Facades\Log;
 use Nuxgame\LaravelDynamicDBFailover\Enums\ConnectionStatus;
 use Nuxgame\LaravelDynamicDBFailover\HealthCheck\ConnectionStateManager;
-use Nuxgame\LaravelDynamicDBFailover\Events\DatabaseConnectionSwitchedEvent;
 use Nuxgame\LaravelDynamicDBFailover\Events\LimitedFunctionalityModeActivatedEvent;
 use Illuminate\Contracts\Events\Dispatcher as EventDispatcher;
+use Nuxgame\LaravelDynamicDBFailover\Events\SwitchedToPrimaryConnectionEvent;
+use Nuxgame\LaravelDynamicDBFailover\Events\SwitchedToFailoverConnectionEvent;
+use Nuxgame\LaravelDynamicDBFailover\Events\ExitedLimitedFunctionalityModeEvent;
 
 class DatabaseFailoverManager
 {
@@ -55,18 +57,39 @@ class DatabaseFailoverManager
         if ($this->currentActiveConnectionName !== $activeConnectionName) {
             $previousConnectionNameForEvent = $this->currentActiveConnectionName;
 
-            Log::info("Switching default database connection from '{$previousConnectionNameForEvent}' to '{$activeConnectionName}'. Reason: Regular determination.");
+            Log::info("Attempting to switch default database connection from '{$previousConnectionNameForEvent}' to '{$activeConnectionName}'.");
             $this->db->setDefaultConnection($activeConnectionName);
             $this->currentActiveConnectionName = $activeConnectionName;
-            $this->events->dispatch(new DatabaseConnectionSwitchedEvent(
-                $previousConnectionNameForEvent,
-                $activeConnectionName
-            ));
 
-            if ($activeConnectionName === $this->blockingConnectionName) {
-                Log::warning("Switched to blocking connection '{$this->blockingConnectionName}'. Limited functionality mode activated.");
-                $this->events->dispatch(new LimitedFunctionalityModeActivatedEvent($this->blockingConnectionName));
+            if ($activeConnectionName === $this->primaryConnectionName) {
+                Log::info("Switched default database connection to PRIMARY '{$activeConnectionName}' from '{$previousConnectionNameForEvent}'.");
+                $this->events->dispatch(new SwitchedToPrimaryConnectionEvent(
+                    $previousConnectionNameForEvent,
+                    $activeConnectionName
+                ));
+                if ($previousConnectionNameForEvent === $this->blockingConnectionName) {
+                    Log::info("Exiting limited functionality mode. Switched to primary '{$activeConnectionName}'.");
+                    $this->events->dispatch(new ExitedLimitedFunctionalityModeEvent($activeConnectionName));
+                }
+            } elseif ($activeConnectionName === $this->failoverConnectionName) {
+                Log::info("Switched default database connection to FAILOVER '{$activeConnectionName}' from '{$previousConnectionNameForEvent}'.");
+                $this->events->dispatch(new SwitchedToFailoverConnectionEvent(
+                    $previousConnectionNameForEvent,
+                    $activeConnectionName
+                ));
+                if ($previousConnectionNameForEvent === $this->blockingConnectionName) {
+                    Log::info("Exiting limited functionality mode. Switched to failover '{$activeConnectionName}'.");
+                    $this->events->dispatch(new ExitedLimitedFunctionalityModeEvent($activeConnectionName));
+                }
+            } elseif ($activeConnectionName === $this->blockingConnectionName) {
+                if ($previousConnectionNameForEvent !== $this->blockingConnectionName) {
+                    Log::warning("Switched to blocking connection '{$this->blockingConnectionName}'. Limited functionality mode activated.");
+                    $this->events->dispatch(new LimitedFunctionalityModeActivatedEvent($this->blockingConnectionName));
+                } else {
+                    Log::info("Remained on blocking connection '{$this->blockingConnectionName}'. No new LimitedFunctionalityModeActivatedEvent dispatched.");
+                }
             }
+
         } else {
             Log::debug("No change in active database connection. Still using '{$activeConnectionName}'.");
         }
@@ -124,24 +147,27 @@ class DatabaseFailoverManager
     {
         $previousConnectionNameForEvent = $this->currentActiveConnectionName;
         Log::info("Forcing switch to primary connection: {$this->primaryConnectionName}. Previous: {$previousConnectionNameForEvent}");
-        $this->stateManager->setConnectionStatus($this->primaryConnectionName, ConnectionStatus::UNKNOWN, 0); // Reset to allow re-check as healthy
-        // No, above line is wrong. forceSwitch should just switch, then determineAndSetConnection will verify and update status if needed.
-        // The goal is to make it the default, then let health checks figure out the actual status soon after.
-        // However, for the event to be correct and the internal state to be immediately consistent:
+
+        // When forcing a switch to primary, we assume it's now healthy and reset its status.
+        // Also reset failover status, as part of restoring primary preference.
+        $this->stateManager->setConnectionStatus($this->primaryConnectionName, ConnectionStatus::HEALTHY, 0);
+        $this->stateManager->setConnectionStatus($this->failoverConnectionName, ConnectionStatus::HEALTHY, 0);
 
         if ($this->currentActiveConnectionName !== $this->primaryConnectionName) {
              $this->db->setDefaultConnection($this->primaryConnectionName);
              $this->currentActiveConnectionName = $this->primaryConnectionName;
-             $this->events->dispatch(new DatabaseConnectionSwitchedEvent(
+             $this->events->dispatch(new SwitchedToPrimaryConnectionEvent(
                  $previousConnectionNameForEvent,
                  $this->primaryConnectionName
              ));
+             if ($previousConnectionNameForEvent === $this->blockingConnectionName) {
+                Log::info("Exiting limited functionality mode due to forced switch to primary '{$this->primaryConnectionName}'.");
+                $this->events->dispatch(new ExitedLimitedFunctionalityModeEvent($this->primaryConnectionName));
+            }
              Log::info("Successfully forced switch to primary connection: {$this->primaryConnectionName}");
         } else {
             Log::info("Already on primary connection. No forced switch needed.");
         }
-        // After forcing, we might want to immediately re-evaluate health if the previous state was bad.
-        // For now, just switch.
     }
 
     /**
@@ -155,10 +181,14 @@ class DatabaseFailoverManager
         if ($this->currentActiveConnectionName !== $this->failoverConnectionName) {
             $this->db->setDefaultConnection($this->failoverConnectionName);
             $this->currentActiveConnectionName = $this->failoverConnectionName;
-            $this->events->dispatch(new DatabaseConnectionSwitchedEvent(
+            $this->events->dispatch(new SwitchedToFailoverConnectionEvent(
                 $previousConnectionNameForEvent,
                 $this->failoverConnectionName
             ));
+            if ($previousConnectionNameForEvent === $this->blockingConnectionName) {
+                Log::info("Exiting limited functionality mode due to forced switch to failover '{$this->failoverConnectionName}'.");
+                $this->events->dispatch(new ExitedLimitedFunctionalityModeEvent($this->failoverConnectionName));
+            }
             Log::info("Successfully forced switch to failover connection: {$this->failoverConnectionName}");
         } else {
             Log::info("Already on failover connection. No forced switch needed.");

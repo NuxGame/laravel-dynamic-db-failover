@@ -11,6 +11,9 @@ use Nuxgame\LaravelDynamicDBFailover\Events\ConnectionDownEvent;
 use Nuxgame\LaravelDynamicDBFailover\Events\ConnectionHealthyEvent;
 use Nuxgame\LaravelDynamicDBFailover\Events\CacheUnavailableEvent;
 use Nuxgame\LaravelDynamicDBFailover\Events\PrimaryConnectionRestoredEvent;
+use Nuxgame\LaravelDynamicDBFailover\Events\FailoverConnectionRestoredEvent;
+use Nuxgame\LaravelDynamicDBFailover\Events\PrimaryConnectionDownEvent;
+use Nuxgame\LaravelDynamicDBFailover\Events\FailoverConnectionDownEvent;
 use Nuxgame\LaravelDynamicDBFailover\HealthCheck\ConnectionHealthChecker;
 use Nuxgame\LaravelDynamicDBFailover\HealthCheck\ConnectionStateManager;
 use Exception;
@@ -20,6 +23,7 @@ use Illuminate\Contracts\Config\Repository as ConfigRepositoryContractAlias; // 
 use Mockery;
 use Orchestra\Testbench\TestCase;
 use Illuminate\Support\Facades\Cache; // Import Cache facade
+use Illuminate\Contracts\Config\Repository as ConfigRepository;
 
 // Helper class for mocking a store that has a tags method for method_exists checks
 class MockableStoreWithTagsForTesting {
@@ -36,6 +40,7 @@ class ConnectionStateManagerTest extends TestCase
     protected $healthCheckerMock;
     protected $cacheRepoMock; // Unified cache mock
     protected $eventDispatcherMock;
+    protected $configRepoMockForCsManager; // Mock for ConfigRepository used by ConnectionStateManager
 
     protected string $testConnectionName = 'mysql_test';
     protected string $primaryConnectionNameConfig = 'mysql_primary';
@@ -47,12 +52,24 @@ class ConnectionStateManagerTest extends TestCase
 
     protected function getEnvironmentSetUp($app)
     {
-        Config::set('dynamic_db_failover.cache.prefix', $this->cachePrefix);
-        Config::set('dynamic_db_failover.health_check.failure_threshold', $this->failureThreshold);
-        Config::set('dynamic_db_failover.cache.ttl_seconds', $this->cacheTtl);
-        Config::set('dynamic_db_failover.cache.tag', $this->cacheTag);
-        Config::set('dynamic_db_failover.cache.store', $this->cacheStoreName); // SUT will use this name to get store
-        Config::set('dynamic_db_failover.connections.primary', $this->primaryConnectionNameConfig);
+        // Remove direct Config::set calls for SUT's internal config, will use a mock instead
+        // Config::set('dynamic_db_failover.cache.prefix', $this->cachePrefix);
+        // Config::set('dynamic_db_failover.health_check.failure_threshold', $this->failureThreshold);
+        // Config::set('dynamic_db_failover.cache.ttl_seconds', $this->cacheTtl);
+        // Config::set('dynamic_db_failover.cache.tag', $this->cacheTag);
+        // Config::set('dynamic_db_failover.cache.store', $this->cacheStoreName);
+        // Config::set('dynamic_db_failover.connections.primary', $this->primaryConnectionNameConfig);
+
+        $this->configRepoMockForCsManager = Mockery::mock(ConfigRepository::class);
+        $this->configRepoMockForCsManager->shouldReceive('get')->with('dynamic_db_failover.cache.prefix', 'dynamic_db_failover_status')->andReturn($this->cachePrefix)->byDefault();
+        $this->configRepoMockForCsManager->shouldReceive('get')->with('dynamic_db_failover.health_check.failure_threshold', 3)->andReturn($this->failureThreshold)->byDefault();
+        $this->configRepoMockForCsManager->shouldReceive('get')->with('dynamic_db_failover.cache.ttl_seconds', 300)->andReturn($this->cacheTtl)->byDefault();
+        $this->configRepoMockForCsManager->shouldReceive('get')->with('dynamic_db_failover.cache.tag', 'dynamic-db-failover')->andReturn($this->cacheTag)->byDefault();
+        $this->configRepoMockForCsManager->shouldReceive('get')->with('dynamic_db_failover.cache.store')->andReturn($this->cacheStoreName)->byDefault();
+        $this->configRepoMockForCsManager->shouldReceive('get')->with('dynamic_db_failover.connections.primary')->andReturn($this->primaryConnectionNameConfig)->byDefault();
+        // Provide a default for failover, can be overridden in specific tests
+        $this->configRepoMockForCsManager->shouldReceive('get')->with('dynamic_db_failover.connections.failover')->andReturn('configured_failover_connection')->byDefault();
+        $app->instance(ConfigRepository::class, $this->configRepoMockForCsManager);
 
         $this->healthCheckerMock = Mockery::mock(ConnectionHealthChecker::class);
         $app->instance(ConnectionHealthChecker::class, $this->healthCheckerMock);
@@ -60,6 +77,8 @@ class ConnectionStateManagerTest extends TestCase
         $this->eventDispatcherMock = Mockery::mock(DispatcherContract::class);
         $app->instance(DispatcherContract::class, $this->eventDispatcherMock);
         $this->eventDispatcherMock->shouldReceive('dispatch')->byDefault();
+        // Allow Testbench/Laravel's FoundationServiceProvider to make its necessary `listen` calls
+        $this->eventDispatcherMock->shouldReceive('listen')->byDefault();
 
         // Configure Laravel's cache system for the test (used by real Cache facade if not fully mocked)
         $app['config']->set('cache.default', $this->cacheStoreName);
@@ -106,6 +125,11 @@ class ConnectionStateManagerTest extends TestCase
         Log::shouldReceive('warning')->andReturnNull()->byDefault();
         Log::shouldReceive('error')->andReturnNull()->byDefault();
         Log::shouldReceive('critical')->andReturnNull()->byDefault();
+    }
+
+    protected function tearDown(): void
+    {
+        parent::tearDown(); // This ensures Mockery::close is called, among other Testbench cleanup.
     }
 
     protected function createStateManager(): ConnectionStateManager
@@ -155,46 +179,29 @@ class ConnectionStateManagerTest extends TestCase
         $connectionName = $this->testConnectionName;
         $statusCacheKey = $this->cachePrefix . '_conn_status_' . $connectionName;
         $failureCountCacheKey = $this->cachePrefix . '_conn_failure_count_' . $connectionName;
-        $newFailures = 1;
+        // Initial failure count that is below threshold after incrementing
+        $initialFailures = 0;
+        $newFailures = $initialFailures + 1;
 
         $this->healthCheckerMock->shouldReceive('isHealthy')->with($connectionName)->once()->andReturn(false);
 
         // SUT calls getConnectionStatus for $previousStatus -> $this->cacheRepoMock->get()
-        $this->cacheRepoMock->shouldReceive('get')->with($statusCacheKey)->once()->ordered()->andReturn(ConnectionStatus::UNKNOWN->value);
+        $this->cacheRepoMock->shouldReceive('get')->with($statusCacheKey)->once()->ordered()->andReturn(ConnectionStatus::UNKNOWN->value); // Call 1 for previousStatus
 
-        // SUT calls $this->cache->increment()
-        // This call in SUT is on $this->cache directly, which is Cache::store(...)
-        // So the expectation should be on $this->cacheRepoMock
-        $this->cacheRepoMock->shouldReceive('increment')->with($failureCountCacheKey)->once()->ordered()->andReturn($newFailures);
-        // SUT then calls $cache->put() for failure count where $cache is getTaggedCache()
+        // SUT calls incrementFailureCount, which calls getFailureCount
+        $this->cacheRepoMock->shouldReceive('get')->with($failureCountCacheKey, 0)->once()->ordered()->andReturn($initialFailures);
+
+        // In the 'else' branch, if previousStatus is UNKNOWN, setConnectionStatus is called.
+        // setConnectionStatus then puts status and failure count.
+        $this->cacheRepoMock->shouldReceive('put')->with($statusCacheKey, ConnectionStatus::UNKNOWN->value, $this->cacheTtl)->once()->ordered();
         $this->cacheRepoMock->shouldReceive('put')->with($failureCountCacheKey, $newFailures, $this->cacheTtl)->once()->ordered();
 
-        // Status should not be set to DOWN yet
-        $this->cacheRepoMock->shouldNotReceive('put')->with($statusCacheKey, ConnectionStatus::DOWN->value, $this->cacheTtl);
-        $this->eventDispatcherMock->shouldNotReceive('dispatch')->with(Mockery::type(ConnectionDownEvent::class));
+        // The Log::debug line then calls getConnectionStatus again.
+        $this->cacheRepoMock->shouldReceive('get')->with($statusCacheKey)->once()->ordered()->andReturn(ConnectionStatus::UNKNOWN->value); // Call 2 for logging
 
-        $stateManager = $this->createStateManager();
-        $stateManager->updateConnectionStatus($connectionName);
-    }
-
-    public function test_update_connection_status_sets_down_and_dispatches_event_on_unhealthy_check_reaching_threshold(): void
-    {
-        $connectionName = $this->testConnectionName;
-        $statusCacheKey = $this->cachePrefix . '_conn_status_' . $connectionName;
-        $failureCountCacheKey = $this->cachePrefix . '_conn_failure_count_' . $connectionName;
-        $failuresAtThreshold = $this->failureThreshold;
-
-        $this->healthCheckerMock->shouldReceive('isHealthy')->with($connectionName)->once()->andReturn(false);
-
-        $this->cacheRepoMock->shouldReceive('get')->with($statusCacheKey)->once()->ordered()->andReturn(ConnectionStatus::UNKNOWN->value); // For $previousStatus
-        $this->cacheRepoMock->shouldReceive('increment')->with($failureCountCacheKey)->once()->ordered()->andReturn($failuresAtThreshold);
-        $this->cacheRepoMock->shouldReceive('put')->with($failureCountCacheKey, $failuresAtThreshold, $this->cacheTtl)->once()->ordered();
-        // This put is for the status being set to DOWN
-        $this->cacheRepoMock->shouldReceive('put')->with($statusCacheKey, ConnectionStatus::DOWN->value, $this->cacheTtl)->once()->ordered();
-
-        $this->eventDispatcherMock->shouldReceive('dispatch')->with(Mockery::on(function($event) use ($connectionName) {
-            return $event instanceof ConnectionDownEvent && $event->connectionName === $connectionName;
-        }))->once();
+        // Status should not be set to DOWN yet, and no DOWN event dispatched
+        $this->eventDispatcherMock->shouldNotReceive('dispatch')->with(Mockery::type(PrimaryConnectionDownEvent::class));
+        $this->eventDispatcherMock->shouldNotReceive('dispatch')->with(Mockery::type(FailoverConnectionDownEvent::class));
 
         $stateManager = $this->createStateManager();
         $stateManager->updateConnectionStatus($connectionName);
@@ -208,24 +215,52 @@ class ConnectionStateManagerTest extends TestCase
 
         $this->healthCheckerMock->shouldReceive('isHealthy')->with($connectionName)->once()->andReturn(true);
 
-        // SUT's updateConnectionStatus calls getConnectionStatus for $previousStatus
         $this->cacheRepoMock->shouldReceive('get')->with($statusCacheKey)->once()->ordered()->andReturn(ConnectionStatus::DOWN->value); // Primary was DOWN
 
-        // SUT updates status to HEALTHY and resets failures
         $this->cacheRepoMock->shouldReceive('put')->with($statusCacheKey, ConnectionStatus::HEALTHY->value, $this->cacheTtl)->once()->ordered();
         $this->cacheRepoMock->shouldReceive('put')->with($failureCountCacheKey, 0, $this->cacheTtl)->once()->ordered();
 
-        // Dispatch ConnectionHealthyEvent
         $this->eventDispatcherMock->shouldReceive('dispatch')->with(Mockery::on(function($event) use ($connectionName) {
             return $event instanceof ConnectionHealthyEvent && $event->connectionName === $connectionName;
         }))->once();
-        // Dispatch PrimaryConnectionRestoredEvent
         $this->eventDispatcherMock->shouldReceive('dispatch')->with(Mockery::on(function($event) use ($connectionName) {
             return $event instanceof PrimaryConnectionRestoredEvent && $event->connectionName === $connectionName;
         }))->once();
+        // Ensure FailoverConnectionRestoredEvent is NOT dispatched for primary
+        $this->eventDispatcherMock->shouldNotReceive('dispatch')->with(Mockery::type(FailoverConnectionRestoredEvent::class));
 
         $stateManager = $this->createStateManager();
         $stateManager->updateConnectionStatus($connectionName);
+    }
+
+    public function test_update_connection_status_dispatches_failover_restored_event_when_failover_becomes_healthy(): void
+    {
+        $failoverConnectionName = 'mysql_test_failover'; // Use a distinct name for clarity
+
+        // Explicitly set the expected config value for failover connection name on our mock for this test
+        $this->configRepoMockForCsManager->shouldReceive('get')->with('dynamic_db_failover.connections.failover')->andReturn($failoverConnectionName);
+
+        $statusCacheKey = $this->cachePrefix . '_conn_status_' . $failoverConnectionName;
+        $failureCountCacheKey = $this->cachePrefix . '_conn_failure_count_' . $failoverConnectionName;
+
+        $this->healthCheckerMock->shouldReceive('isHealthy')->with($failoverConnectionName)->once()->andReturn(true);
+        $this->cacheRepoMock->shouldReceive('get')->with($statusCacheKey)->once()->ordered()->andReturn(ConnectionStatus::DOWN->value); // Failover was DOWN
+
+        $this->cacheRepoMock->shouldReceive('put')->with($statusCacheKey, ConnectionStatus::HEALTHY->value, $this->cacheTtl)->once()->ordered();
+        $this->cacheRepoMock->shouldReceive('put')->with($failureCountCacheKey, 0, $this->cacheTtl)->once()->ordered();
+
+        $this->eventDispatcherMock->shouldReceive('dispatch')->with(Mockery::on(function($event) use ($failoverConnectionName) {
+            return $event instanceof ConnectionHealthyEvent && $event->connectionName === $failoverConnectionName;
+        }))->once();
+
+        $this->eventDispatcherMock->shouldReceive('dispatch')->with(Mockery::on(function($event) use ($failoverConnectionName) {
+            return $event instanceof FailoverConnectionRestoredEvent && $event->connectionName === $failoverConnectionName;
+        }))->once();
+        // Ensure PrimaryConnectionRestoredEvent is NOT dispatched for failover
+        $this->eventDispatcherMock->shouldNotReceive('dispatch')->with(Mockery::type(PrimaryConnectionRestoredEvent::class));
+
+        $stateManager = $this->createStateManager(); // Recreate to pick up new config for failover name if needed
+        $stateManager->updateConnectionStatus($failoverConnectionName);
     }
 
     public function test_get_connection_status_returns_status_from_cache(): void
@@ -288,68 +323,31 @@ class ConnectionStateManagerTest extends TestCase
         $this->assertEquals(0, $stateManager->getFailureCount($connectionName));
     }
 
-    public function test_set_connection_status_updates_cache_and_dispatches_healthy_event(): void
+    public function test_set_connection_status_updates_cache_but_does_not_dispatch_events(): void
     {
         $connectionName = $this->testConnectionName;
         $status = ConnectionStatus::HEALTHY;
         $statusCacheKey = $this->cachePrefix . '_conn_status_' . $connectionName;
         $failureCountCacheKey = $this->cachePrefix . '_conn_failure_count_' . $connectionName;
 
-        $localCacheRepoMock = Mockery::mock(CacheRepositoryContract::class, TaggedCacheInterface::class);
-        $mockActualStore = Mockery::mock(MockableStoreWithTagsForTesting::class);
-        $mockActualStore->shouldReceive('tags')->with($this->cacheTag)->andReturn($localCacheRepoMock);
-        $localCacheRepoMock->shouldReceive('getStore')->andReturn($mockActualStore);
-        $localCacheRepoMock->shouldReceive('tags')->with($this->cacheTag)->andReturn($localCacheRepoMock);
+        // Mock the cache interactions for setConnectionStatus
+        $this->cacheRepoMock->shouldReceive('put')->with($statusCacheKey, $status->value, $this->cacheTtl)->once();
+        $this->cacheRepoMock->shouldReceive('put')->with($failureCountCacheKey, 0, $this->cacheTtl)->once(); // Failure count is 0 for HEALTHY
 
-        Cache::shouldReceive('store')->withAnyArgs()->andReturn($localCacheRepoMock);
+        // Assert that NO events are dispatched by setConnectionStatus directly
+        $this->eventDispatcherMock->shouldNotReceive('dispatch')->with(Mockery::type(ConnectionHealthyEvent::class));
+        $this->eventDispatcherMock->shouldNotReceive('dispatch')->with(Mockery::type(PrimaryConnectionDownEvent::class));
+        $this->eventDispatcherMock->shouldNotReceive('dispatch')->with(Mockery::type(FailoverConnectionDownEvent::class));
 
-        $localCacheRepoMock->shouldReceive('put')->with($statusCacheKey, $status->value, $this->cacheTtl)->once()->ordered();
-        $localCacheRepoMock->shouldReceive('get')->with($statusCacheKey)->once()->ordered()->andReturn(ConnectionStatus::DOWN->value);
-        $localCacheRepoMock->shouldReceive('put')->with($failureCountCacheKey, 0, $this->cacheTtl)->once()->ordered();
-
-        $this->eventDispatcherMock->shouldReceive('dispatch')->with(Mockery::on(function ($event) use ($connectionName) {
-            return $event instanceof ConnectionHealthyEvent && $event->connectionName === $connectionName;
-        }))->once();
-
-        // Ensure SUT is instantiated directly here
-        $stateManager = new ConnectionStateManager(
-            $this->healthCheckerMock,
-            $this->app['config'],
-            $this->eventDispatcherMock
-        );
+        $stateManager = $this->createStateManager();
         $stateManager->setConnectionStatus($connectionName, $status, 0);
-    }
 
-    public function test_set_connection_status_updates_cache_and_dispatches_down_event(): void
-    {
-        $connectionName = $this->primaryConnectionNameConfig;
+        // Try with DOWN status as well to ensure no DOWN events are dispatched from here
         $status = ConnectionStatus::DOWN;
         $failureCount = $this->failureThreshold;
-        $statusCacheKey = $this->cachePrefix . '_conn_status_' . $connectionName;
-        $failureCountCacheKey = $this->cachePrefix . '_conn_failure_count_' . $connectionName;
+        $this->cacheRepoMock->shouldReceive('put')->with($statusCacheKey, $status->value, $this->cacheTtl)->once();
+        $this->cacheRepoMock->shouldReceive('put')->with($failureCountCacheKey, $failureCount, $this->cacheTtl)->once();
 
-        $localCacheRepoMock = Mockery::mock(CacheRepositoryContract::class, TaggedCacheInterface::class);
-        $mockActualStore = Mockery::mock(MockableStoreWithTagsForTesting::class);
-        $mockActualStore->shouldReceive('tags')->with($this->cacheTag)->andReturn($localCacheRepoMock);
-        $localCacheRepoMock->shouldReceive('getStore')->andReturn($mockActualStore);
-        $localCacheRepoMock->shouldReceive('tags')->with($this->cacheTag)->andReturn($localCacheRepoMock);
-
-        Cache::shouldReceive('store')->withAnyArgs()->andReturn($localCacheRepoMock);
-
-        $localCacheRepoMock->shouldReceive('put')->with($statusCacheKey, $status->value, $this->cacheTtl)->once()->ordered();
-        $localCacheRepoMock->shouldReceive('get')->with($statusCacheKey)->once()->ordered()->andReturn(ConnectionStatus::HEALTHY->value);
-        $localCacheRepoMock->shouldReceive('put')->with($failureCountCacheKey, $failureCount, $this->cacheTtl)->once()->ordered();
-
-        $this->eventDispatcherMock->shouldReceive('dispatch')->with(Mockery::on(function ($event) use ($connectionName) {
-            return $event instanceof ConnectionDownEvent && $event->connectionName === $connectionName;
-        }))->once();
-
-        // Ensure SUT is instantiated directly here
-        $stateManager = new ConnectionStateManager(
-            $this->healthCheckerMock,
-            $this->app['config'],
-            $this->eventDispatcherMock
-        );
         $stateManager->setConnectionStatus($connectionName, $status, $failureCount);
     }
 
@@ -562,12 +560,10 @@ class ConnectionStateManagerTest extends TestCase
         // SUT's updateConnectionStatus:
         // 1. Calls getConnectionStatus (previousStatus). Assume this works and returns UNKNOWN.
         $this->cacheRepoMock->shouldReceive('get')->with($statusCacheKey)->once()->ordered()->andReturn(ConnectionStatus::UNKNOWN->value);
-        // 2. Tries to $this->cache->increment($failureCountCacheKey), this is where we throw.
-        //    Note: SUT uses $this->cache->increment, not $this->getTaggedCache()->increment.
-        //    So the mock on Cache::store() should ensure $this->cache is $this->cacheRepoMock.
-        $this->cacheRepoMock->shouldReceive('increment')->with($failureCountCacheKey)->once()->ordered()->andThrow($exception);
+        // 2. Tries to $this->getTaggedCache()->get($failureCountCacheKey, 0) within getFailureCount, this is where we throw.
+        $this->cacheRepoMock->shouldReceive('get')->with($failureCountCacheKey, 0)->once()->ordered()->andThrow($exception);
 
-        // No 'put' for failure count or status update if increment fails.
+        // No 'put' for failure count or status update if getFailureCount fails and dispatches.
         // $this->cacheRepoMock->shouldNotReceive('put')->with($failureCountCacheKey, Mockery::any(), $this->cacheTtl);
         // $this->cacheRepoMock->shouldNotReceive('put')->with($statusCacheKey, ConnectionStatus::DOWN->value, $this->cacheTtl);
 
@@ -613,9 +609,7 @@ class ConnectionStateManagerTest extends TestCase
         // SUT's setConnectionStatus:
         // 1. $cache->put($statusCacheKey, ...) - Assume this works.
         $this->cacheRepoMock->shouldReceive('put')->with($statusCacheKey, $status->value, $this->cacheTtl)->once()->ordered();
-        // 2. Internal getConnectionStatus() -> $this->getTaggedCache()->get() - Assume this works.
-        $this->cacheRepoMock->shouldReceive('get')->with($statusCacheKey)->once()->ordered()->andReturn($status->value); // To make currentPersistedStatus === status
-        // 3. $cache->put($failureCountCacheKey, 0, ...) - This is where we throw.
+        // 2. $cache->put($failureCountCacheKey, 0, ...) - This is where we throw.
         $this->cacheRepoMock->shouldReceive('put')->with($failureCountCacheKey, 0, $this->cacheTtl)->once()->ordered()->andThrow($exception);
 
         $this->eventDispatcherMock->shouldReceive('dispatch')->with(Mockery::on(function($event) use ($exception) {
@@ -628,5 +622,65 @@ class ConnectionStateManagerTest extends TestCase
 
         $stateManager = $this->createStateManager();
         $stateManager->setConnectionStatus($connectionName, $status);
+    }
+
+    public function test_update_connection_status_dispatches_primary_down_event(): void
+    {
+        $connectionName = $this->primaryConnectionNameConfig; // Test with the primary connection
+        $statusCacheKey = $this->cachePrefix . '_conn_status_' . $connectionName;
+        $failureCountCacheKey = $this->cachePrefix . '_conn_failure_count_' . $connectionName;
+        $failuresAtThreshold = $this->failureThreshold;
+
+        $this->healthCheckerMock->shouldReceive('isHealthy')->with($connectionName)->once()->andReturn(false);
+
+        // Mocking for SUT's internal calls within updateConnectionStatus:
+        // 1. getConnectionStatus (for previousStatus)
+        $this->cacheRepoMock->shouldReceive('get')->with($statusCacheKey)->once()->ordered()->andReturn(ConnectionStatus::UNKNOWN->value);
+        // 2. incrementFailureCount -> getFailureCount
+        $this->cacheRepoMock->shouldReceive('get')->with($failureCountCacheKey, 0)->once()->ordered()->andReturn($failuresAtThreshold - 1);
+        // 3. setConnectionStatus (for DOWN status and failure count) - relaxing order for these two puts
+        $this->cacheRepoMock->shouldReceive('put')->with($statusCacheKey, ConnectionStatus::DOWN->value, $this->cacheTtl)->once(); // No longer ordered
+        $this->cacheRepoMock->shouldReceive('put')->with($failureCountCacheKey, $failuresAtThreshold, $this->cacheTtl)->once(); // No longer ordered
+
+        $this->eventDispatcherMock->shouldReceive('dispatch')->with(Mockery::on(function($event) use ($connectionName) {
+            return $event instanceof PrimaryConnectionDownEvent && $event->connectionName === $connectionName;
+        }))->once();
+        // Ensure other specific down event is not dispatched
+        $this->eventDispatcherMock->shouldNotReceive('dispatch')->with(Mockery::type(FailoverConnectionDownEvent::class));
+
+        $stateManager = $this->createStateManager();
+        $stateManager->updateConnectionStatus($connectionName);
+    }
+
+    public function test_update_connection_status_dispatches_failover_down_event(): void
+    {
+        $failoverConnectionName = 'mysql_test_failover'; // Using a configured failover name
+
+        // Explicitly set the expected config value for failover connection name on our mock
+        $this->configRepoMockForCsManager->shouldReceive('get')->with('dynamic_db_failover.connections.failover')->andReturn($failoverConnectionName);
+
+        // No need to call Config::set directly anymore for this key
+        // Config::set('dynamic_db_failover.connections.failover', $failoverConnectionName);
+
+        // Re-create stateManager to ensure it picks up dependencies from the app container, which now includes our mocked ConfigRepository
+        $stateManager = $this->createStateManager();
+
+        $statusCacheKey = $this->cachePrefix . '_conn_status_' . $failoverConnectionName;
+        $failureCountCacheKey = $this->cachePrefix . '_conn_failure_count_' . $failoverConnectionName;
+        $failuresAtThreshold = $this->failureThreshold;
+
+        $this->healthCheckerMock->shouldReceive('isHealthy')->with($failoverConnectionName)->once()->andReturn(false);
+
+        $this->cacheRepoMock->shouldReceive('get')->with($statusCacheKey)->once()->ordered()->andReturn(ConnectionStatus::UNKNOWN->value);
+        $this->cacheRepoMock->shouldReceive('get')->with($failureCountCacheKey, 0)->once()->ordered()->andReturn($failuresAtThreshold - 1);
+        $this->cacheRepoMock->shouldReceive('put')->with($statusCacheKey, ConnectionStatus::DOWN->value, $this->cacheTtl)->once();
+        $this->cacheRepoMock->shouldReceive('put')->with($failureCountCacheKey, $failuresAtThreshold, $this->cacheTtl)->once();
+
+        $this->eventDispatcherMock->shouldReceive('dispatch')->with(Mockery::on(function($event) use ($failoverConnectionName) {
+            return $event instanceof FailoverConnectionDownEvent && $event->connectionName === $failoverConnectionName;
+        }))->once();
+        $this->eventDispatcherMock->shouldNotReceive('dispatch')->with(Mockery::type(PrimaryConnectionDownEvent::class));
+
+        $stateManager->updateConnectionStatus($failoverConnectionName);
     }
 }

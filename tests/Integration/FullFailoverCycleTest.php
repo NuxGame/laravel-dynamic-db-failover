@@ -24,6 +24,9 @@ use Illuminate\Contracts\Events\Dispatcher as EventDispatcherContract;
 use Nuxgame\LaravelDynamicDBFailover\HealthCheck\ConnectionHealthChecker;
 use Illuminate\Contracts\Cache\Factory as CacheFactoryContract;
 use PHPUnit\Framework\Attributes\Test;
+use Nuxgame\LaravelDynamicDBFailover\Events\SwitchedToPrimaryConnectionEvent;
+use Nuxgame\LaravelDynamicDBFailover\Events\SwitchedToFailoverConnectionEvent;
+use Nuxgame\LaravelDynamicDBFailover\Events\ExitedLimitedFunctionalityModeEvent;
 
 class FullFailoverCycleTest extends TestCase
 {
@@ -125,9 +128,15 @@ class FullFailoverCycleTest extends TestCase
         parent::setUp(); // App boots, services get real dispatcher initially
 
         Event::fake([
-            DatabaseConnectionSwitchedEvent::class,
+            // DatabaseConnectionSwitchedEvent::class, // Removed
             LimitedFunctionalityModeActivatedEvent::class,
             PrimaryConnectionRestoredEvent::class,
+            // Add new events that are asserted in this test or related flows
+            SwitchedToPrimaryConnectionEvent::class,
+            SwitchedToFailoverConnectionEvent::class,
+            ExitedLimitedFunctionalityModeEvent::class,
+            // ConnectionHealthyEvent and ConnectionDownEvent are also relevant but might not be directly asserted here
+            // CacheUnavailableEvent might also be relevant if testing cache issues
         ]);
 
         // Re-bind critical services to ensure they use the faked EventDispatcher
@@ -166,6 +175,10 @@ class FullFailoverCycleTest extends TestCase
 
         $this->runMigrationsForConnection($this->primaryConnectionName);
         $this->runMigrationsForConnection($this->failoverConnectionName);
+
+        // Ensure config is fresh before flushing cache, as per discussion
+        $this->artisan('config:clear');
+        $this->artisan('cache:clear'); // General Laravel cache clear
 
         Cache::store(Config::get('dynamic_db_failover.cache.store'))->flush();
         DB::purge($this->primaryConnectionName);
@@ -258,6 +271,7 @@ class FullFailoverCycleTest extends TestCase
         DB::purge($this->primaryConnectionName);
         DB::connection($this->primaryConnectionName)->select('SELECT 1');
         // Event::assertDispatched(DatabaseConnectionSwitchedEvent::class); // REMOVED - Event not guaranteed here if already on primary
+        // No switch event expected if already on primary or successfully initialized to primary.
 
         // 2. Primary goes DOWN, Failover should become active.
         Log::info("TEST STEP 2: Primary goes down, should switch to failover.");
@@ -266,14 +280,27 @@ class FullFailoverCycleTest extends TestCase
         $this->assertEquals($this->failoverConnectionName, DB::getDefaultConnection(), "Step 2 Failed: Default connection should be failover.");
         DB::purge($this->failoverConnectionName);
         DB::connection($this->failoverConnectionName)->select('SELECT 1');
-        Event::assertDispatched(DatabaseConnectionSwitchedEvent::class);
+        Event::assertDispatched(SwitchedToFailoverConnectionEvent::class, function ($event) {
+            return $event->newConnectionName === $this->failoverConnectionName &&
+                   $event->previousConnectionName === $this->primaryConnectionName;
+        });
+        Event::assertNotDispatched(ExitedLimitedFunctionalityModeEvent::class);
 
         // 3. Failover also goes DOWN, Blocking connection should become active.
         Log::info("TEST STEP 3: Failover also goes down, should switch to blocking.");
         $this->simulateConnectionDown($this->failoverConnectionName);
         $checkAndUpdate($this->failoverConnectionName); // Check failover, it will fail
         $this->assertEquals($this->blockingConnectionName, DB::getDefaultConnection(), "Step 3 Failed: Default connection should be blocking.");
-        Event::assertDispatched(LimitedFunctionalityModeActivatedEvent::class);
+        Event::assertDispatched(LimitedFunctionalityModeActivatedEvent::class, function ($event) {
+            return $event->connectionName === $this->blockingConnectionName;
+        });
+        // Ensure other switch/exit events are not dispatched when entering LFM
+        // Event::assertNotDispatched(SwitchedBackToPrimaryConnectionEvent::class); // Removed: This event is expected in Step 1
+        Event::assertNotDispatched(SwitchedToFailoverConnectionEvent::class, function ($event) {
+            // This ensures we are not confused by the event from step 2 if assertions are cumulative
+            return $event->previousConnectionName !== $this->primaryConnectionName;
+        });
+        Event::assertNotDispatched(ExitedLimitedFunctionalityModeEvent::class);
 
         try {
             DB::connection($this->blockingConnectionName)->select('SELECT 1');
@@ -289,7 +316,15 @@ class FullFailoverCycleTest extends TestCase
         $this->assertEquals($this->primaryConnectionName, DB::getDefaultConnection(), "Step 4 Failed: Default connection should be restored to primary.");
         DB::purge($this->primaryConnectionName);
         DB::connection($this->primaryConnectionName)->select('SELECT 1');
-        Event::assertDispatched(PrimaryConnectionRestoredEvent::class);
-        Event::assertDispatched(DatabaseConnectionSwitchedEvent::class);
+        Event::assertDispatched(PrimaryConnectionRestoredEvent::class, function ($event) {
+            return $event->connectionName === $this->primaryConnectionName;
+        });
+        Event::assertDispatched(SwitchedToPrimaryConnectionEvent::class, function ($event) {
+            return $event->newConnectionName === $this->primaryConnectionName &&
+                   $event->previousConnectionName === $this->blockingConnectionName;
+        });
+        Event::assertDispatched(ExitedLimitedFunctionalityModeEvent::class, function ($event) {
+            return $event->restoredToConnectionName === $this->primaryConnectionName;
+        });
     }
 }

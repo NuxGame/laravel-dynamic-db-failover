@@ -8,10 +8,12 @@ use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Nuxgame\LaravelDynamicDBFailover\Enums\ConnectionStatus;
-use Nuxgame\LaravelDynamicDBFailover\Events\ConnectionDownEvent;
+use Nuxgame\LaravelDynamicDBFailover\Events\PrimaryConnectionDownEvent;
+use Nuxgame\LaravelDynamicDBFailover\Events\FailoverConnectionDownEvent;
 use Nuxgame\LaravelDynamicDBFailover\Events\ConnectionHealthyEvent;
-use Nuxgame\LaravelDynamicDBFailover\Events\CacheUnavailableEvent;
 use Nuxgame\LaravelDynamicDBFailover\Events\PrimaryConnectionRestoredEvent;
+use Nuxgame\LaravelDynamicDBFailover\Events\FailoverConnectionRestoredEvent;
+use Nuxgame\LaravelDynamicDBFailover\Events\CacheUnavailableEvent;
 
 class ConnectionStateManager
 {
@@ -73,49 +75,49 @@ class ConnectionStateManager
      */
     public function updateConnectionStatus(string $connectionName): void
     {
-        $isCurrentlyHealthy = $this->healthChecker->isHealthy($connectionName);
-        $statusCacheKey = $this->getStatusCacheKey($connectionName);
-        $failureCountCacheKey = $this->getFailureCountCacheKey($connectionName);
-        $previousStatus = $this->getConnectionStatus($connectionName); // Get status before update
+        $isHealthy = $this->healthChecker->isHealthy($connectionName);
+        $previousStatus = $this->getConnectionStatus($connectionName);
 
-        try {
-            $cache = $this->getTaggedCache();
-            if ($isCurrentlyHealthy) {
-                $cache->put($statusCacheKey, ConnectionStatus::HEALTHY->value, $this->cacheTtlSeconds);
-                $cache->put($failureCountCacheKey, 0, $this->cacheTtlSeconds);
-                Log::info("Connection '{$connectionName}' is HEALTHY. Status updated in cache.");
-                $this->events->dispatch(new ConnectionHealthyEvent($connectionName));
+        if ($isHealthy) {
+            $this->setConnectionStatus($connectionName, ConnectionStatus::HEALTHY, 0);
+            $this->events->dispatch(new ConnectionHealthyEvent($connectionName));
 
-                // If the primary connection was previously down and is now healthy
-                if ($connectionName === $this->config->get('dynamic_db_failover.connections.primary') && $previousStatus === ConnectionStatus::DOWN) {
+            if ($previousStatus === ConnectionStatus::DOWN) {
+                if ($connectionName === $this->config->get('dynamic_db_failover.connections.primary')) {
+                    Log::info("Primary connection '{$connectionName}' restored.");
                     $this->events->dispatch(new PrimaryConnectionRestoredEvent($connectionName));
-                }
-
-            } else {
-                $currentFailures = (int)$this->cache->increment($failureCountCacheKey);
-                $cache->put($failureCountCacheKey, $currentFailures, $this->cacheTtlSeconds);
-
-                Log::warning("Health check failed for connection '{$connectionName}'. Current failure count: {$currentFailures}.");
-
-                if ($currentFailures >= $this->failureThreshold) {
-                    if ($previousStatus !== ConnectionStatus::DOWN) { // Dispatch event only on transition to DOWN
-                        $cache->put($statusCacheKey, ConnectionStatus::DOWN->value, $this->cacheTtlSeconds);
-                        Log::error("Connection '{$connectionName}' marked as DOWN after reaching failure threshold ({$this->failureThreshold}). Status updated in cache.");
-                        $this->events->dispatch(new ConnectionDownEvent($connectionName));
-                    } else {
-                        $cache->put($statusCacheKey, ConnectionStatus::DOWN->value, $this->cacheTtlSeconds);
-                    }
-                } else {
-                    // If status was HEALTHY and we didn't reach threshold for DOWN, it remains HEALTHY in cache until TTL
-                    // or explicitly set to UNKNOWN if we want to reflect uncertainty sooner.
-                    // Current logic: if not DOWN, its previous status (HEALTHY/UNKNOWN) remains until next update or TTL.
-                    // If it was UNKNOWN, it remains UNKNOWN.
-                    // If it was HEALTHY, it remains HEALTHY but failures increment.
+                } elseif ($connectionName === $this->config->get('dynamic_db_failover.connections.failover')) {
+                    Log::info("Failover connection '{$connectionName}' restored.");
+                    $this->events->dispatch(new FailoverConnectionRestoredEvent($connectionName));
                 }
             }
-        } catch (\Exception $e) {
-            Log::critical("Failed to update connection status for '{$connectionName}' in cache: " . $e->getMessage());
-            $this->events->dispatch(new CacheUnavailableEvent($e));
+        } else {
+            $failureCount = $this->incrementFailureCount($connectionName);
+            if ($failureCount >= $this->failureThreshold && $previousStatus !== ConnectionStatus::DOWN) {
+                $this->setConnectionStatus($connectionName, ConnectionStatus::DOWN, $failureCount);
+                Log::warning("Connection '{$connectionName}' marked as DOWN after {$failureCount} failures.");
+                // Dispatch specific down event
+                if ($connectionName === $this->config->get('dynamic_db_failover.connections.primary')) {
+                    $this->events->dispatch(new PrimaryConnectionDownEvent($connectionName));
+                } elseif ($connectionName === $this->config->get('dynamic_db_failover.connections.failover')) {
+                    $this->events->dispatch(new FailoverConnectionDownEvent($connectionName));
+                } else {
+                    // Fallback for unknown connection names, though health checks are typically specific
+                    // Log this case as it might be unexpected
+                    Log::warning("Generic ConnectionDownEvent dispatched for an unexpected connection: {$connectionName}");
+                    // If we decide ConnectionDownEvent is still needed for other cases, dispatch it here.
+                    // For now, we only dispatch specific events for primary/failover.
+                    // $this->events->dispatch(new ConnectionDownEvent($connectionName));
+                }
+            } else {
+                // Still UNKNOWN or already DOWN, just update failure count if not already marked DOWN
+                // If status is already DOWN, failure count is not primary info, status is.
+                // If status is UNKNOWN, we update it with the new failure count.
+                if ($previousStatus === ConnectionStatus::UNKNOWN) {
+                     $this->setConnectionStatus($connectionName, ConnectionStatus::UNKNOWN, $failureCount);
+                }
+                Log::debug("Connection '{$connectionName}' unhealthy, failure count: {$failureCount}. Status: {$this->getConnectionStatus($connectionName)->value}");
+            }
         }
     }
 
@@ -175,24 +177,21 @@ class ConnectionStateManager
             $cache->put($statusCacheKey, $status->value, $this->cacheTtlSeconds);
             Log::info("Connection '{$connectionName}' status explicitly set to '{$status->value}'.");
 
-            $currentPersistedStatus = $this->getConnectionStatus($connectionName); // Re-fetch to confirm and for event logic
-
             if ($status === ConnectionStatus::HEALTHY) {
                 $cache->put($failureCountCacheKey, 0, $this->cacheTtlSeconds);
-                if ($currentPersistedStatus !== ConnectionStatus::HEALTHY) { // Dispatch only if status changed effectively
-                   $this->events->dispatch(new ConnectionHealthyEvent($connectionName));
-                }
             } elseif ($status === ConnectionStatus::DOWN) {
                 if ($failureCount !== null) {
                     $cache->put($failureCountCacheKey, $failureCount, $this->cacheTtlSeconds);
                 } else {
                     $cache->put($failureCountCacheKey, $this->failureThreshold, $this->cacheTtlSeconds);
                 }
-                if ($currentPersistedStatus !== ConnectionStatus::DOWN) { // Dispatch only if status changed effectively
-                    $this->events->dispatch(new ConnectionDownEvent($connectionName));
-                }
             } elseif ($status === ConnectionStatus::UNKNOWN) {
-                $cache->put($failureCountCacheKey, 0, $this->cacheTtlSeconds);
+                if ($failureCount !== null) {
+                    $cache->put($failureCountCacheKey, $failureCount, $this->cacheTtlSeconds);
+                } else {
+                    // Fallback if somehow called with UNKNOWN and no explicit failure count
+                    $cache->put($failureCountCacheKey, 0, $this->cacheTtlSeconds);
+                }
             }
 
         } catch (\Exception $e) {
@@ -242,6 +241,14 @@ class ConnectionStateManager
     public function isConnectionUnknown(string $connectionName): bool
     {
         return $this->getConnectionStatus($connectionName) === ConnectionStatus::UNKNOWN;
+    }
+
+    protected function incrementFailureCount(string $connectionName): int
+    {
+        $count = $this->getFailureCount($connectionName) + 1;
+        // Status will be updated along with this count in the calling method if threshold is met or status is UNKNOWN
+        // For now, just return the incremented count. setConnectionStatus will store it.
+        return $count;
     }
 
 }

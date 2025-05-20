@@ -43,6 +43,13 @@ class ConnectionHealthCheckerTest extends TestCase
         Log::shouldReceive('error')->andReturnNull()->byDefault();
     }
 
+    protected function tearDown(): void
+    {
+        // MockeryPHPUnitIntegration should handle this, but explicit call for safety
+        \Mockery::close();
+        parent::tearDown();
+    }
+
     protected function createHealthChecker(): ConnectionHealthChecker
     {
         return new ConnectionHealthChecker($this->dbManagerMock, $this->configMock);
