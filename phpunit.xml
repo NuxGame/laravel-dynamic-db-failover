@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/11.5/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+         cacheResult="false">
+    <testsuites>
+        <testsuite name="Unit">
+            <directory suffix="Test.php">./tests/Unit</directory>
+        </testsuite>
+        <testsuite name="Integration">
+            <directory suffix="Test.php">./tests/Integration</directory>
+        </testsuite>
+    </testsuites>
+    <php>
+        <env name="APP_ENV" value="testing"/>
+        <env name="BCRYPT_ROUNDS" value="4"/>
+        <env name="CACHE_DRIVER" value="redis"/>
+        <env name="DB_CONNECTION" value="mysql_primary_test"/> <!-- Default for test setup -->
+        <env name="MAIL_MAILER" value="array"/>
+        <env name="QUEUE_CONNECTION" value="sync"/>
+        <env name="SESSION_DRIVER" value="array"/>
+        <env name="TELESCOPE_ENABLED" value="false"/>
+
+        <!-- Package Specific Test Config -->
+        <env name="DYNAMIC_DB_FAILOVER_ENABLED" value="true"/>
+        <env name="DYNAMIC_DB_PRIMARY_NAME" value="mysql_primary_test"/>
+        <env name="DYNAMIC_DB_FAILOVER_NAME" value="mysql_failover_test"/>
+        <env name="DYNAMIC_DB_BLOCKING_NAME" value="blocking_test"/>
+        <env name="DYNAMIC_DB_CACHE_STORE" value="redis"/>
+        <env name="DYNAMIC_DB_CACHE_PREFIX" value="db_failover_test_"/>
+        <env name="DYNAMIC_DB_FAILURE_THRESHOLD" value="1"/>
+
+        <!-- DB connections for Orchestra Testbench -->
+        <!-- These will be overridden by getEnvironmentSetUp in tests, but good defaults -->
+        <env name="DB_HOST_PRIMARY_TEST" value="db_primary"/>
+        <env name="DB_PORT_PRIMARY_TEST" value="3306"/>
+        <env name="DB_DATABASE_PRIMARY_TEST" value="laravel_primary"/>
+        <env name="DB_USERNAME_PRIMARY_TEST" value="user"/>
+        <env name="DB_PASSWORD_PRIMARY_TEST" value="password"/>
+
+        <env name="DB_HOST_FAILOVER_TEST" value="db_failover"/>
+        <env name="DB_PORT_FAILOVER_TEST" value="3306"/>
+        <env name="DB_DATABASE_FAILOVER_TEST" value="laravel_failover"/>
+        <env name="DB_USERNAME_FAILOVER_TEST" value="user"/>
+        <env name="DB_PASSWORD_FAILOVER_TEST" value="password"/>
+
+        <env name="REDIS_HOST" value="redis_cache"/>
+        <env name="REDIS_PORT" value="6379"/>
+        <env name="REDIS_PASSWORD" value=""/>
+        <env name="REDIS_DB_DEFAULT" value="0"/>
+        <env name="REDIS_DB_CACHE" value="1"/>
+    </php>
+    <source>
+        <include>
+            <directory suffix=".php">./src</directory>
+        </include>
+    </source>
+</phpunit>

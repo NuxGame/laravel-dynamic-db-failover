@@ -43,8 +43,7 @@ class BlockingConnection extends Connection
     public function cursor($query, $bindings = [], $useReadPdo = true): \Generator
     {
         $this->throwBlockedConnectionException();
-        // @phpstan-ignore-next-line
-        if (false) { yield; } // Satisfy return type, though exception is always thrown first.
+        return (function (): \Generator { yield; })(); // Immediately invoked empty generator
     }
 
     public function insert($query, $bindings = []): bool
@@ -127,6 +126,12 @@ class BlockingConnection extends Connection
     public function getReadPdo()
     {
         return $this->getPdo();
+    }
+
+    public function unprepared($query): bool
+    {
+        $this->throwBlockedConnectionException();
+        return false; // Satisfy return type
     }
 
     // Many other methods could be overridden from Illuminate\Database\Connection.

@@ -9,14 +9,16 @@ class LimitedFunctionalityModeActivatedEvent
 {
     use Dispatchable, SerializesModels;
 
+    public string $connectionName;
+
     /**
      * Create a new event instance.
      *
+     * @param string $connectionName
      * @return void
      */
-    public function __construct()
+    public function __construct(string $connectionName)
     {
-        // This event might not need specific data,
-        // its occurrence is significant enough.
+        $this->connectionName = $connectionName;
     }
 }

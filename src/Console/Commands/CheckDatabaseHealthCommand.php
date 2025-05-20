@@ -54,6 +54,12 @@ class CheckDatabaseHealthCommand extends Command
         $connectionsToWatch = [];
 
         if ($specificConnection) {
+            // Validate if the specific connection exists in the database configurations
+            if (!$this->config->has("database.connections.{$specificConnection}")) {
+                $this->error("Connection '{$specificConnection}' is not configured in your database settings.");
+                Log::error("Attempted health check for unconfigured connection: {$specificConnection}");
+                return Command::FAILURE;
+            }
             $connectionsToWatch[] = $specificConnection;
             $this->info("Performing health check for specific connection: {$specificConnection}");
         } else {
@@ -80,7 +86,7 @@ class CheckDatabaseHealthCommand extends Command
                 // Status (HEALTHY/DOWN) is logged by ConnectionStateManager
                 $status = $this->stateManager->getConnectionStatus($connectionName);
                 $failures = $this->stateManager->getFailureCount($connectionName);
-                $this->info("Connection '{$connectionName}' status: {$status}, Failures: {$failures}");
+                $this->info("Connection '{$connectionName}' status: {$status->value}, Failures: {$failures}");
             } catch (\Exception $e) {
                 $this->error("Failed to check health for connection '{$connectionName}': " . $e->getMessage());
                 Log::error("Health check command failed for connection '{$connectionName}': ", ['exception' => $e]);

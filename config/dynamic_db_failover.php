@@ -16,38 +16,18 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Primary Database Connection Name
+    | Database Connection Names
     |--------------------------------------------------------------------------
     |
-    | This is the name of the primary database connection as defined in your
-    | application's config/database.php file.
+    | Define the names of your primary, failover, and blocking connections
+    | as they are configured in your application's config/database.php file.
     |
     */
-    'primary_connection_name' => env('DB_CONNECTION', 'mysql'),
-
-    /*
-    |--------------------------------------------------------------------------
-    | Failover Database Connection Name
-    |--------------------------------------------------------------------------
-    |
-    | This is the name of the failover database connection (e.g., RDS Proxy)
-    | as defined in your application's config/database.php file.
-    |
-    */
-    'failover_connection_name' => 'mysql_failover', // Example, ensure this connection is configured
-
-    /*
-    |--------------------------------------------------------------------------
-    | Blocking Driver Connection Name
-    |--------------------------------------------------------------------------
-    |
-    | This is the name for the connection that will use the custom "blocking"
-    | database driver when both primary and failover connections are down.
-    | This connection will also need to be defined in config/database.php,
-    | pointing to the 'blocking' driver.
-    |
-    */
-    'blocking_connection_name' => 'blocking_connection',
+    'connections' => [
+        'primary' => env('DB_CONNECTION', 'mysql'),
+        'failover' => 'mysql_failover', // Example, ensure this connection is configured
+        'blocking' => 'blocking_connection', // Example, ensure this connection is configured
+    ],
 
     /*
     |--------------------------------------------------------------------------

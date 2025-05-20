@@ -1,0 +1,5 @@
+# PHPUnit
+.phpunit.result.cache
+
+# Dependencies
+/vendor/
