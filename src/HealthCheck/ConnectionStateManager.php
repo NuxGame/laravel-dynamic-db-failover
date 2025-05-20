@@ -3,7 +3,8 @@
 namespace Nuxgame\LaravelDynamicDBFailover\HealthCheck;
 
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
-use Illuminate\Contracts\Cache\Repository as CacheRepository;
+use Illuminate\Contracts\Cache\Repository as CacheRepositoryContract;
+use Illuminate\Contracts\Cache\Factory as CacheFactoryContract;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -15,22 +16,52 @@ use Nuxgame\LaravelDynamicDBFailover\Events\PrimaryConnectionRestoredEvent;
 use Nuxgame\LaravelDynamicDBFailover\Events\FailoverConnectionRestoredEvent;
 use Nuxgame\LaravelDynamicDBFailover\Events\CacheUnavailableEvent;
 
+/**
+ * Class ConnectionStateManager
+ *
+ * Manages the health state (status and failure counts) of monitored database connections.
+ * It uses a cache to persist these states and dispatches events upon significant state changes
+ * (e.g., connection down, connection healthy, cache unavailability).
+ */
 class ConnectionStateManager
 {
+    /** @var ConnectionHealthChecker Service to perform actual health checks on connections. */
     protected ConnectionHealthChecker $healthChecker;
-    protected CacheRepository $cache;
+
+    /** @var CacheRepositoryContract The resolved cache repository instance for storing states. */
+    protected CacheRepositoryContract $cache;
+
+    /** @var ConfigRepository Repository for accessing package and application configurations. */
     protected ConfigRepository $config;
+
+    /** @var Dispatcher Service for dispatching events related to connection state changes. */
     protected Dispatcher $events;
 
+    /** @var string Prefix for cache keys used by this manager. */
     protected string $cachePrefix;
+
+    /** @var int Number of consecutive failures before a connection is marked as DOWN. */
     protected int $failureThreshold;
+
+    /** @var int Time-to-live in seconds for cached connection states. */
     protected int $cacheTtlSeconds;
+
+    /** @var string Cache tag used for grouping and flushing failover-related cache entries. */
     protected string $cacheTag;
 
+    /**
+     * ConnectionStateManager constructor.
+     *
+     * @param ConnectionHealthChecker $healthChecker Service for checking connection health.
+     * @param ConfigRepository $config Repository for configuration values.
+     * @param Dispatcher $events Service for dispatching events.
+     * @param CacheFactoryContract $cacheFactory Factory to resolve the appropriate cache store.
+     */
     public function __construct(
         ConnectionHealthChecker $healthChecker,
         ConfigRepository $config,
-        Dispatcher $events
+        Dispatcher $events,
+        CacheFactoryContract $cacheFactory
     )
     {
         $this->healthChecker = $healthChecker;
@@ -43,7 +74,7 @@ class ConnectionStateManager
         $this->cacheTag = $this->config->get('dynamic_db_failover.cache.tag', 'dynamic-db-failover');
 
         $cacheStoreName = $this->config->get('dynamic_db_failover.cache.store');
-        $this->cache = $cacheStoreName ? Cache::store($cacheStoreName) : Cache::store();
+        $this->cache = $cacheFactory->store($cacheStoreName);
 
         // Check if the selected cache store supports tags
         if (!method_exists($this->cache->getStore(), 'tags')) {
@@ -52,7 +83,12 @@ class ConnectionStateManager
         }
     }
 
-    protected function getTaggedCache(): CacheRepository
+    /**
+     * Returns the configured cache repository, applying tags if supported and configured.
+     *
+     * @return CacheRepositoryContract The cache repository instance (possibly tagged).
+     */
+    protected function getTaggedCache(): CacheRepositoryContract
     {
         if (!empty($this->cacheTag) && method_exists($this->cache->getStore(), 'tags')) {
             return $this->cache->tags($this->cacheTag);
@@ -60,18 +96,37 @@ class ConnectionStateManager
         return $this->cache;
     }
 
+    /**
+     * Generates the cache key for storing a connection's status.
+     *
+     * @param string $connectionName The name of the database connection.
+     * @return string The generated cache key.
+     */
     protected function getStatusCacheKey(string $connectionName): string
     {
         return $this->cachePrefix . '_conn_status_' . $connectionName;
     }
 
+    /**
+     * Generates the cache key for storing a connection's failure count.
+     *
+     * @param string $connectionName The name of the database connection.
+     * @return string The generated cache key.
+     */
     protected function getFailureCountCacheKey(string $connectionName): string
     {
         return $this->cachePrefix . '_conn_failure_count_' . $connectionName;
     }
 
     /**
-     * Updates the health status of the given connection based on a new check.
+     * Updates the health status of the given connection based on a new health check.
+     * If the connection is healthy, its status is set to HEALTHY and failure count reset.
+     * If unhealthy, the failure count is incremented. If the threshold is met, status becomes DOWN.
+     * Dispatches events like ConnectionHealthyEvent, PrimaryConnectionRestoredEvent,
+     * FailoverConnectionRestoredEvent, PrimaryConnectionDownEvent, or FailoverConnectionDownEvent accordingly.
+     *
+     * @param string $connectionName The name of the database connection to update.
+     * @return void
      */
     public function updateConnectionStatus(string $connectionName): void
     {
@@ -84,46 +139,51 @@ class ConnectionStateManager
 
             if ($previousStatus === ConnectionStatus::DOWN) {
                 if ($connectionName === $this->config->get('dynamic_db_failover.connections.primary')) {
-                    Log::info("Primary connection '{$connectionName}' restored.");
+                    Log::info("Primary connection '{$connectionName}' restored after being down.");
                     $this->events->dispatch(new PrimaryConnectionRestoredEvent($connectionName));
                 } elseif ($connectionName === $this->config->get('dynamic_db_failover.connections.failover')) {
-                    Log::info("Failover connection '{$connectionName}' restored.");
+                    Log::info("Failover connection '{$connectionName}' restored after being down.");
                     $this->events->dispatch(new FailoverConnectionRestoredEvent($connectionName));
                 }
             }
         } else {
             $failureCount = $this->incrementFailureCount($connectionName);
-            if ($failureCount >= $this->failureThreshold && $previousStatus !== ConnectionStatus::DOWN) {
-                $this->setConnectionStatus($connectionName, ConnectionStatus::DOWN, $failureCount);
-                Log::warning("Connection '{$connectionName}' marked as DOWN after {$failureCount} failures.");
-                // Dispatch specific down event
-                if ($connectionName === $this->config->get('dynamic_db_failover.connections.primary')) {
-                    $this->events->dispatch(new PrimaryConnectionDownEvent($connectionName));
-                } elseif ($connectionName === $this->config->get('dynamic_db_failover.connections.failover')) {
-                    $this->events->dispatch(new FailoverConnectionDownEvent($connectionName));
+
+            if ($failureCount >= $this->failureThreshold) {
+                // Only mark as DOWN and dispatch event if it wasn't already DOWN.
+                if ($previousStatus !== ConnectionStatus::DOWN) {
+                    $this->setConnectionStatus($connectionName, ConnectionStatus::DOWN, $failureCount);
+                    Log::warning("Connection '{$connectionName}' marked as DOWN after {$failureCount} failures.");
+
+                    if ($connectionName === $this->config->get('dynamic_db_failover.connections.primary')) {
+                        $this->events->dispatch(new PrimaryConnectionDownEvent($connectionName));
+                    } elseif ($connectionName === $this->config->get('dynamic_db_failover.connections.failover')) {
+                        $this->events->dispatch(new FailoverConnectionDownEvent($connectionName));
+                    } else {
+                        Log::warning("A non-primary/failover connection '{$connectionName}' reached failure threshold. Consider specific event or review configuration.");
+                        // No generic ConnectionDownEvent dispatched here by design, focus on primary/failover state for now.
+                    }
                 } else {
-                    // Fallback for unknown connection names, though health checks are typically specific
-                    // Log this case as it might be unexpected
-                    Log::warning("Generic ConnectionDownEvent dispatched for an unexpected connection: {$connectionName}");
-                    // If we decide ConnectionDownEvent is still needed for other cases, dispatch it here.
-                    // For now, we only dispatch specific events for primary/failover.
-                    // $this->events->dispatch(new ConnectionDownEvent($connectionName));
+                    // Already DOWN, ensure failure count in cache reflects the latest increment if it changed.
+                    // This might happen if health checks continue on a DOWN connection.
+                    $this->setConnectionStatus($connectionName, ConnectionStatus::DOWN, $failureCount); // Re-set to update TTL and count
+                    Log::debug("Connection '{$connectionName}' remains DOWN. Failure count: {$failureCount}.");
                 }
             } else {
-                // Still UNKNOWN or already DOWN, just update failure count if not already marked DOWN
-                // If status is already DOWN, failure count is not primary info, status is.
-                // If status is UNKNOWN, we update it with the new failure count.
-                if ($previousStatus === ConnectionStatus::UNKNOWN) {
-                     $this->setConnectionStatus($connectionName, ConnectionStatus::UNKNOWN, $failureCount);
-                }
-                Log::debug("Connection '{$connectionName}' unhealthy, failure count: {$failureCount}. Status: {$this->getConnectionStatus($connectionName)->value}");
+                // Still under threshold, status remains UNKNOWN (or potentially HEALTHY if it flapped quickly, though previousStatus check handles that).
+                // Update status to UNKNOWN with the new failure count.
+                $this->setConnectionStatus($connectionName, ConnectionStatus::UNKNOWN, $failureCount);
+                Log::debug("Connection '{$connectionName}' unhealthy, failure count: {$failureCount} (under threshold). Status: UNKNOWN.");
             }
         }
     }
 
     /**
      * Retrieves the current status of the connection from cache.
-     * @return ConnectionStatus Enum case
+     * Returns ConnectionStatus::UNKNOWN if not found, invalid, or if cache is unavailable (dispatches CacheUnavailableEvent).
+     *
+     * @param string $connectionName The name of the database connection.
+     * @return ConnectionStatus The current status of the connection.
      */
     public function getConnectionStatus(string $connectionName): ConnectionStatus
     {
@@ -131,18 +191,22 @@ class ConnectionStateManager
         try {
             $statusValue = $this->getTaggedCache()->get($statusCacheKey);
             if ($statusValue === null) {
-                Log::debug("No status found in cache for '{$connectionName}'. Returning UNKNOWN.");
+                Log::debug("No status found in cache for '{$connectionName}'. Defaulting to UNKNOWN.");
                 return ConnectionStatus::UNKNOWN;
             }
 
-            $status = ConnectionStatus::tryFrom($statusValue);
+            $status = ConnectionStatus::tryFrom((string) $statusValue); // Cast to string for tryFrom
             if ($status === null) {
-                Log::warning("Invalid status value '{$statusValue}' found in cache for '{$connectionName}'. Returning UNKNOWN.");
+                Log::warning("Invalid status value '{$statusValue}' found in cache for '{$connectionName}'. Defaulting to UNKNOWN.");
+                // Optionally, remove the invalid status from cache here
+                // $this->getTaggedCache()->forget($statusCacheKey);
                 return ConnectionStatus::UNKNOWN;
             }
             return $status;
         } catch (\Exception $e) {
-            Log::critical("Failed to retrieve connection status for '{$connectionName}' from cache: " . $e->getMessage());
+            Log::critical("Cache Exception: Failed to retrieve connection status for '{$connectionName}': " . $e->getMessage(), [
+                'connection' => $connectionName, 'exception' => $e
+            ]);
             $this->events->dispatch(new CacheUnavailableEvent($e));
             return ConnectionStatus::UNKNOWN;
         }
@@ -150,6 +214,10 @@ class ConnectionStateManager
 
     /**
      * Retrieves the current failure count for the connection from cache.
+     * Returns 0 if not found or if cache is unavailable (dispatches CacheUnavailableEvent).
+     *
+     * @param string $connectionName The name of the database connection.
+     * @return int The current failure count.
      */
     public function getFailureCount(string $connectionName): int
     {
@@ -157,15 +225,24 @@ class ConnectionStateManager
         try {
             return (int)$this->getTaggedCache()->get($failureCountCacheKey, 0);
         } catch (\Exception $e) {
-            Log::critical("Failed to retrieve failure count for '{$connectionName}' from cache: " . $e->getMessage());
+            Log::critical("Cache Exception: Failed to retrieve failure count for '{$connectionName}': " . $e->getMessage(), [
+                'connection' => $connectionName, 'exception' => $e
+            ]);
             $this->events->dispatch(new CacheUnavailableEvent($e));
             return 0; // Return 0 as a safe default if cache is inaccessible
         }
     }
 
     /**
-     * Explicitly sets the status of a connection.
-     * Useful for manual overrides or when a connection is known to be down/up without a health check.
+     * Explicitly sets the status and failure count of a connection in the cache.
+     * This can be used for manual overrides or initializing state.
+     * Dispatches CacheUnavailableEvent if cache operations fail.
+     *
+     * @param string $connectionName The name of the database connection.
+     * @param ConnectionStatus $status The status to set.
+     * @param int|null $failureCount The failure count to set. If null, defaults based on status
+     *                             (0 for HEALTHY, threshold for DOWN, 0 for UNKNOWN).
+     * @return void
      */
     public function setConnectionStatus(string $connectionName, ConnectionStatus $status, ?int $failureCount = null): void
     {
@@ -177,78 +254,116 @@ class ConnectionStateManager
             $cache->put($statusCacheKey, $status->value, $this->cacheTtlSeconds);
             Log::info("Connection '{$connectionName}' status explicitly set to '{$status->value}'.");
 
-            if ($status === ConnectionStatus::HEALTHY) {
-                $cache->put($failureCountCacheKey, 0, $this->cacheTtlSeconds);
-            } elseif ($status === ConnectionStatus::DOWN) {
-                if ($failureCount !== null) {
-                    $cache->put($failureCountCacheKey, $failureCount, $this->cacheTtlSeconds);
-                } else {
-                    $cache->put($failureCountCacheKey, $this->failureThreshold, $this->cacheTtlSeconds);
-                }
-            } elseif ($status === ConnectionStatus::UNKNOWN) {
-                if ($failureCount !== null) {
-                    $cache->put($failureCountCacheKey, $failureCount, $this->cacheTtlSeconds);
-                } else {
-                    // Fallback if somehow called with UNKNOWN and no explicit failure count
-                    $cache->put($failureCountCacheKey, 0, $this->cacheTtlSeconds);
-                }
+            $effectiveFailureCount = $failureCount;
+            if ($failureCount === null) {
+                match ($status) {
+                    ConnectionStatus::HEALTHY => $effectiveFailureCount = 0,
+                    ConnectionStatus::DOWN => $effectiveFailureCount = $this->failureThreshold,
+                    ConnectionStatus::UNKNOWN => $effectiveFailureCount = 0, // Default UNKNOWN to 0 failures
+                };
             }
+            $cache->put($failureCountCacheKey, $effectiveFailureCount, $this->cacheTtlSeconds);
+            Log::debug("Connection '{$connectionName}' failure count set to {$effectiveFailureCount}.");
 
         } catch (\Exception $e) {
-            Log::critical("Failed to explicitly set connection status for '{$connectionName}' in cache: " . $e->getMessage());
+            Log::critical("Cache Exception: Failed to explicitly set connection status for '{$connectionName}': " . $e->getMessage(), [
+                'connection' => $connectionName, 'status' => $status->value, 'exception' => $e
+            ]);
             $this->events->dispatch(new CacheUnavailableEvent($e));
         }
     }
 
-     /**
-     * Flushes all cached data related to dynamic DB failover.
+    /**
+     * Increments the failure count for a given connection and stores it in the cache.
+     * Dispatches CacheUnavailableEvent if cache operations fail.
+     *
+     * @param string $connectionName The name of the database connection.
+     * @return int The new failure count after incrementing.
+     */
+    protected function incrementFailureCount(string $connectionName): int
+    {
+        $currentFailures = $this->getFailureCount($connectionName);
+        $newFailures = $currentFailures + 1;
+
+        try {
+            $this->getTaggedCache()->put($this->getFailureCountCacheKey($connectionName), $newFailures, $this->cacheTtlSeconds);
+            Log::debug("Incremented failure count for '{$connectionName}' to {$newFailures}.");
+            return $newFailures;
+        } catch (\Exception $e) {
+            Log::critical("Cache Exception: Failed to increment failure count for '{$connectionName}': " . $e->getMessage(), [
+                'connection' => $connectionName, 'exception' => $e
+            ]);
+            $this->events->dispatch(new CacheUnavailableEvent($e));
+            // If cache put fails, return current (stale) count + 1, though it wasn't persisted.
+            // The impact is that the next check might re-increment from the stale value.
+            return $newFailures;
+        }
+    }
+
+    /**
+     * Flushes all cached statuses and failure counts related to dynamic DB failover.
+     * Uses cache tags if supported and configured; otherwise, logs a warning about potential incompleteness.
+     * Dispatches CacheUnavailableEvent if cache operations fail.
+     *
+     * @return void
      */
     public function flushAllStatuses(): void
     {
         try {
             if (!empty($this->cacheTag) && method_exists($this->cache->getStore(), 'tags')) {
-                $this->cache->tags($this->cacheTag)->flush();
+                // When tags are supported and configured, flush only the tagged entries.
+                /** @var \Illuminate\Cache\TaggedCache $taggedCache */
+                $taggedCache = $this->cache->tags($this->cacheTag);
+                $taggedCache->flush();
                 Log::info("All dynamic DB failover statuses flushed from cache using tag '{$this->cacheTag}'.");
             } else {
-                // Fallback if tags are not supported or not configured: delete known keys individually.
-                // This is less ideal and might miss keys if patterns change.
-                // Consider requiring a taggable cache store or implementing pattern deletion if available.
-                Log::warning("Cache store does not support tags or no tag configured. Attempting to flush known keys individually (might be incomplete).");
-                // This part would need a way to list keys by prefix, which Cache repository doesn't universally support.
-                // For Redis, one might use SCAN. For others, this is tricky.
-                // For simplicity, we will state that for non-taggable caches, flush is a no-op or manual task.
-                // Or, if we know the exact keys (e.g. primary, failover), delete them.
-                // For now, we log a warning and don't delete individually to avoid complexity without a reliable method.
-                 Log::warning("FlushAllStatuses without tags is not fully supported for all cache drivers. Please use a taggable cache store for reliable flushing or clear cache manually.");
-
+                // If tags are not supported/configured, selective flushing of only failover keys is not reliably possible
+                // across all cache drivers without iterating keys (which isn't standard in CacheRepositoryContract).
+                // Flushing the entire store ($this->cache->getStore()->flush()) is too broad an action for this method.
+                // Therefore, we log a detailed warning advising on manual cleanup or using a taggable store.
+                Log::warning(
+                    "Cache store '{$this->config->get('dynamic_db_failover.cache.store', 'default')}' " .
+                    "does not support tags or no tag is configured for '{$this->cacheTag}'. " .
+                    "Cannot selectively flush only failover statuses. Please use a taggable cache store, or clear relevant cache keys manually " .
+                    "(e.g., keys prefixed with '{$this->cachePrefix}')."
+                );
             }
         } catch (\Exception $e) {
-            Log::critical("Failed to flush connection statuses from cache: " . $e->getMessage());
+            Log::critical("Cache Exception: Failed to flush connection statuses: " . $e->getMessage(), ['exception' => $e]);
             $this->events->dispatch(new CacheUnavailableEvent($e));
         }
     }
 
+    /**
+     * Checks if the specified connection is currently marked as DOWN.
+     *
+     * @param string $connectionName The name of the database connection.
+     * @return bool True if the connection status is DOWN, false otherwise.
+     */
     public function isConnectionDown(string $connectionName): bool
     {
         return $this->getConnectionStatus($connectionName) === ConnectionStatus::DOWN;
     }
 
+    /**
+     * Checks if the specified connection is currently marked as HEALTHY.
+     *
+     * @param string $connectionName The name of the database connection.
+     * @return bool True if the connection status is HEALTHY, false otherwise.
+     */
     public function isConnectionHealthy(string $connectionName): bool
     {
         return $this->getConnectionStatus($connectionName) === ConnectionStatus::HEALTHY;
     }
 
+    /**
+     * Checks if the specified connection is currently in an UNKNOWN state.
+     *
+     * @param string $connectionName The name of the database connection.
+     * @return bool True if the connection status is UNKNOWN, false otherwise.
+     */
     public function isConnectionUnknown(string $connectionName): bool
     {
         return $this->getConnectionStatus($connectionName) === ConnectionStatus::UNKNOWN;
     }
-
-    protected function incrementFailureCount(string $connectionName): int
-    {
-        $count = $this->getFailureCount($connectionName) + 1;
-        // Status will be updated along with this count in the calling method if threshold is met or status is UNKNOWN
-        // For now, just return the incremented count. setConnectionStatus will store it.
-        return $count;
-    }
-
 }

@@ -13,6 +13,13 @@ use Nuxgame\LaravelDynamicDBFailover\HealthCheck\ConnectionHealthChecker;
 use Illuminate\Contracts\Config\Repository as ConfigRepositoryContract;
 use Illuminate\Contracts\Cache\Factory as CacheFactoryContract; // Use Cache Factory for store resolution
 
+/**
+ * Class DynamicDBFailoverServiceProvider
+ *
+ * The main service provider for the Laravel Dynamic Database Failover package.
+ * This provider registers necessary services, commands, custom database drivers,
+ * and handles the initial determination of the active database connection upon booting.
+ */
 class DynamicDBFailoverServiceProvider extends ServiceProvider
 {
     /**
@@ -22,12 +29,12 @@ class DynamicDBFailoverServiceProvider extends ServiceProvider
      */
     public function register()
     {
-        // Код регистрации для пакета (например, слияние конфигурации)
+        // Merge package configuration with the application's configuration.
         $this->mergeConfigFrom(
             __DIR__.'/../config/dynamic_db_failover.php', 'dynamic_db_failover'
         );
 
-        // Register ConnectionHealthChecker
+        // Register ConnectionHealthChecker as a singleton.
         $this->app->singleton(ConnectionHealthChecker::class, function ($app) {
             return new ConnectionHealthChecker(
                 $app->make(IlluminateDBManager::class),
@@ -35,16 +42,17 @@ class DynamicDBFailoverServiceProvider extends ServiceProvider
             );
         });
 
-        // Register ConnectionStateManager
+        // Register ConnectionStateManager as a singleton.
         $this->app->singleton(ConnectionStateManager::class, function ($app) {
             return new ConnectionStateManager(
                 $app->make(ConnectionHealthChecker::class),
                 $app->make(ConfigRepositoryContract::class),
-                $app->make(EventDispatcherContract::class) // Inject Event Dispatcher
+                $app->make(EventDispatcherContract::class), // Inject Event Dispatcher
+                $app->make(CacheFactoryContract::class) // Inject Cache Factory
             );
         });
 
-        // Register DatabaseFailoverManager
+        // Register DatabaseFailoverManager as a singleton.
         $this->app->singleton(DatabaseFailoverManager::class, function ($app) {
             return new DatabaseFailoverManager(
                 $app->make(ConfigRepositoryContract::class),
@@ -54,25 +62,24 @@ class DynamicDBFailoverServiceProvider extends ServiceProvider
             );
         });
 
-        // Регистрация кастомного драйвера базы данных 'blocking'
+        // Register the custom 'blocking' database driver.
+        // This driver is used when all other connections (primary, failover) are unavailable.
         $this->app->resolving('db', function (IlluminateDBManager $db) {
             $db->extend('blocking', function ($config, $name) {
-                // $config содержит массив конфигурации для этого соединения из config/database.php
-                // $name содержит имя соединения (например, 'blocking_connection')
+                // $config contains the configuration array for this connection from config/database.php
+                // $name contains the connection name (e.g., 'blocking_connection')
 
-                // Поскольку BlockingConnection не использует реальное PDO, мы можем передать null
-                // или фиктивный объект, который он ожидает в конструкторе.
-                // Конструктор BlockingConnection ожидает $pdo, $database, $tablePrefix, $config.
-                // $config['name'] = $name; // Можно добавить имя соединения в конфиг, если нужно внутри BlockingConnection
-
-                // Заглушка для PDO, так как BlockingConnection его не использует по-настоящему.
+                // The BlockingConnection does not interact with a real PDO object for its primary function
+                // (which is to throw exceptions on query attempts). Thus, a dummy stdClass suffices
+                // to satisfy the constructor's type hint if it were for a generic PDO-like object,
+                // or simply as a placeholder if no PDO methods are called.
                 $pdoDummy = new \stdClass();
 
                 return new BlockingConnection($pdoDummy, $config['database'], $config['prefix'], $config);
             });
         });
 
-        // Register Artisan commands
+        // Register Artisan commands if running in the console.
         if ($this->app->runningInConsole()) {
             $this->commands([
                 CheckDatabaseHealthCommand::class,
@@ -87,76 +94,82 @@ class DynamicDBFailoverServiceProvider extends ServiceProvider
      */
     public function boot()
     {
-        // Код загрузки для пакета (например, публикация конфигурации, миграций, представлений)
+        // Publish package configuration if running in console.
         if ($this->app->runningInConsole()) {
             $this->publishes([
                 __DIR__.'/../config/dynamic_db_failover.php' => config_path('dynamic_db_failover.php'),
             ], 'config');
 
-            // Здесь можно будет добавить публикацию миграций, если они понадобятся
+            // Placeholder for publishing migrations if needed in the future.
             // $this->publishes([
             //     __DIR__.'/../database/migrations/' => database_path('migrations'),
             // ], 'migrations');
 
-            // Регистрация команд Artisan, если они будут
+            // Placeholder for registering additional Artisan commands.
             // $this->commands([
             //     YourConsoleCommand::class,
             // ]);
         }
 
-        // Загрузка маршрутов, если они есть
+        // Placeholder for loading routes if the package provides them.
         // $this->loadRoutesFrom(__DIR__.'/../routes/web.php');
 
-        // Загрузка представлений, если они есть
+        // Placeholder for loading views if the package provides them.
         // $this->loadViewsFrom(__DIR__.'/../resources/views', 'dynamic-db-failover');
         // $this->publishes([
         //     __DIR__.'/../resources/views' => resource_path('views/vendor/dynamic-db-failover'),
         // ], 'views');
 
-        // Загрузка файлов локализации, если они есть
+        // Placeholder for loading translation files if the package provides them.
         // $this->loadTranslationsFrom(__DIR__.'/../resources/lang', 'dynamic-db-failover');
         // $this->publishes([
         //     __DIR__.'/../resources/lang' => resource_path('lang/vendor/dynamic-db-failover'),
         // ], 'translations');
 
-        // Determine and set the active database connection
-        // This needs to happen after DB services are registered but before they are heavily used.
-        // Boot method is a suitable place.
+        // Determine and set the initial active database connection based on health checks.
+        // This is crucial for the package to function correctly from the start of the application lifecycle.
         if ($this->shouldRunFailoverLogic()) {
              try {
+                /** @var DatabaseFailoverManager $failoverManager */
                 $failoverManager = $this->app->make(DatabaseFailoverManager::class);
                 $failoverManager->determineAndSetConnection();
             } catch (\Exception $e) {
-                // Log critical error if failover manager itself fails during boot
-                // Potentially fallback to a default connection if possible, or let it fail loudly
-                logger()->critical('DynamicDBFailover: Failed to initialize DatabaseFailoverManager during boot: ' . $e->getMessage(), [
-                    'exception' => $e
-                ]);
-                // Depending on severity, might re-throw or ensure a default connection like primary is set
-                // For now, logging is the primary action.
+                // Log a critical error if the DatabaseFailoverManager fails to initialize during boot.
+                // This could happen if, for example, the cache service is down and ConnectionStateManager
+                // cannot operate, or if there's a fundamental issue with DB configuration resolving.
+                // The application might be in an unstable state if this fails.
+                // For now, we log the error and allow the application to continue, which might mean
+                // it operates on Laravel's default connection without failover capabilities active.
+                logger()->critical(
+                    'DynamicDBFailover: Failed to initialize DatabaseFailoverManager during boot: ' . $e->getMessage(),
+                    ['exception' => $e]
+                );
             }
         }
     }
 
     /**
      * Determines if the failover logic should run.
-     * For example, we might not want to run this for specific console commands or routes.
-     * By default, it runs always if the package is enabled.
+     * This method provides a control point to enable or disable the failover mechanism,
+     * for instance, based on configuration or the current application environment (e.g., console commands).
+     *
+     * @return bool True if the failover logic should be executed, false otherwise.
      */
     protected function shouldRunFailoverLogic(): bool
     {
-        // Allow disabling via config for specific environments or globally
+        // Check the 'dynamic_db_failover.enabled' configuration value.
+        // If set to false, the failover logic will not run.
         if (!$this->app->make(ConfigRepositoryContract::class)->get('dynamic_db_failover.enabled', true)) {
             return false;
         }
 
-        // Example: Avoid running for migrations or specific commands
+        // Example: Future enhancement to exclude certain console commands.
         // if ($this->app->runningInConsole()) {
         //     $excludedCommands = $this->app->make(ConfigRepositoryContract::class)->get('dynamic_db_failover.excluded_console_commands', [
         //         'migrate', 'migrate:fresh', 'migrate:rollback', // etc.
         //     ]);
-        //     // This requires inspecting current command, e.g., via $this->app['request']->server('argv') or a dedicated command checker
-        //     // For simplicity, this check is basic. A more robust solution would inspect the input command.
+        //     // This would require inspecting the current command, e.g., via $this->app['request']->server('argv')
+        //     // or a dedicated command checker. For simplicity, this is currently a basic check.
         // }
 
         return true;
