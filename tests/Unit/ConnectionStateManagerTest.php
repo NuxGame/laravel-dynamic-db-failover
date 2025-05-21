@@ -215,11 +215,10 @@ class ConnectionStateManagerTest extends TestCase
     }
 
     /**
-     * Tests `updateConnectionStatus` when a connection check is healthy.
-     * Expects status to be HEALTHY, failures reset, and relevant events dispatched.
-     * @test
+     * Tests that when a connection is found healthy, its status is set to HEALTHY
+     * and its failure count is reset to 0.
      */
-    public function test_update_connection_status_sets_healthy_and_resets_failures_on_healthy_check(): void
+    public function testUpdateConnectionStatusSetsHealthyAndResetsFailuresOnHealthyCheck(): void
     {
         $connectionName = $this->testConnectionName;
         $statusCacheKey = $this->cachePrefix . '_conn_status_' . $connectionName;
