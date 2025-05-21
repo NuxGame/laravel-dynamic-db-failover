@@ -139,7 +139,7 @@ class BlockingConnectionTest extends TestCase
             // For this test, it can be empty as BlockingConnection overrides query methods.
             // $connection->select('SELECT 1'); // Example of what might be here
         });
-        $this->assertEquals([], $result, "The pretend method should return an empty array for BlockingConnection.");
+        $this->assertSame([], $result, "The pretend method should return an empty array for BlockingConnection.");
     }
 
     /**

@@ -401,7 +401,7 @@ class ConnectionStateManagerTest extends TestCase
         $this->cacheRepoMock->shouldReceive('get')->with($statusCacheKey)->once()->andReturn(ConnectionStatus::HEALTHY->value);
 
         $stateManager = $this->createStateManager();
-        $this->assertEquals(ConnectionStatus::HEALTHY, $stateManager->getConnectionStatus($connectionName));
+        $this->assertSame(ConnectionStatus::HEALTHY, $stateManager->getConnectionStatus($connectionName));
     }
 
     /**
@@ -417,7 +417,7 @@ class ConnectionStateManagerTest extends TestCase
         $this->cacheRepoMock->shouldReceive('get')->with($statusCacheKey)->once()->andReturn(null);
 
         $stateManager = $this->createStateManager();
-        $this->assertEquals(ConnectionStatus::UNKNOWN, $stateManager->getConnectionStatus($connectionName));
+        $this->assertSame(ConnectionStatus::UNKNOWN, $stateManager->getConnectionStatus($connectionName));
     }
 
     /**
@@ -442,7 +442,7 @@ class ConnectionStateManagerTest extends TestCase
         }))->once();
 
         $stateManager = $this->createStateManager();
-        $this->assertEquals(ConnectionStatus::UNKNOWN, $stateManager->getConnectionStatus($connectionName));
+        $this->assertSame(ConnectionStatus::UNKNOWN, $stateManager->getConnectionStatus($connectionName));
     }
 
     /**
@@ -460,7 +460,7 @@ class ConnectionStateManagerTest extends TestCase
         $this->cacheRepoMock->shouldReceive('get')->with($failureCountCacheKey, 0)->once()->andReturn($expectedCount);
 
         $stateManager = $this->createStateManager();
-        $this->assertEquals($expectedCount, $stateManager->getFailureCount($connectionName));
+        $this->assertSame($expectedCount, $stateManager->getFailureCount($connectionName));
     }
 
     /**
@@ -485,7 +485,7 @@ class ConnectionStateManagerTest extends TestCase
         }))->once();
 
         $stateManager = $this->createStateManager();
-        $this->assertEquals(0, $stateManager->getFailureCount($connectionName), 'Should return 0 on cache exception.');
+        $this->assertSame(0, $stateManager->getFailureCount($connectionName), 'Should return 0 on cache exception.');
     }
 
     /**

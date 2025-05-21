@@ -43,35 +43,103 @@ class ConnectionHealthChecker
     public function isHealthy(string $connectionName): bool
     {
         $healthCheckQuery = $this->config->get('dynamic_db_failover.health_check.query', 'SELECT 1');
-        // The 'timeout_seconds' from config is harder to enforce per query without complex logic.
-        // We rely on the connection's own configured timeout for now for the connection attempt itself,
-        // and the query itself should be very lightweight.
+        $timeoutSeconds = (int) $this->config->get('dynamic_db_failover.health_check.timeout_seconds', 2);
+
+        $connection = null;
+        $pdo = null;
+        $originalTimeout = null;
 
         try {
-            // Attempt to get the connection. This can fail if config is bad or driver is missing.
             $connection = $this->dbManager->connection($connectionName);
+            $pdo = $connection->getPdo();
 
-            // Ping the database by executing a simple query.
-            // Using unprepared() to avoid issues with query binding if not needed for a simple query like "SELECT 1".
+            // Save the current PDO timeout, if it is set and supported
+            if ($pdo instanceof \PDO && method_exists($pdo, 'getAttribute')) {
+                try {
+                    // Some drivers may not support ATTR_TIMEOUT or it might not be set
+                    $originalTimeout = $pdo->getAttribute(\PDO::ATTR_TIMEOUT);
+                } catch (\PDOException $e) {
+                    Log::debug("ConnectionHealthChecker: Could not get PDO::ATTR_TIMEOUT for connection '{$connectionName}'. Message: {$e->getMessage()}");
+                    // Not critical if getting fails, we just won't be able to restore a specific value
+                }
+            }
+
+            // Set the new timeout for the health check query
+            if ($pdo instanceof \PDO && method_exists($pdo, 'setAttribute')) {
+                try {
+                    $pdo->setAttribute(\PDO::ATTR_TIMEOUT, $timeoutSeconds);
+                } catch (\PDOException $e) {
+                    Log::warning("ConnectionHealthChecker: Could not set PDO::ATTR_TIMEOUT to {$timeoutSeconds}s for connection '{$connectionName}'. Message: {$e->getMessage()}");
+                    // If setting fails, the query will execute with the default/previous connection timeout
+                }
+            } else {
+                Log::debug("ConnectionHealthChecker: PDO::setAttribute method not available or PDO object not instance of \\PDO for connection '{$connectionName}', cannot set query timeout.");
+            }
+
             $connection->unprepared($healthCheckQuery);
 
-            Log::debug("Health check for connection '{$connectionName}' passed.");
+            Log::debug("Health check for connection '{$connectionName}' passed within timeout ({$timeoutSeconds}s).");
+            $this->restorePdoTimeout($pdo, $originalTimeout, $connectionName); // Restore the timeout
             return true;
         } catch (PDOException $e) {
-            // Specific PDO exceptions (e.g., connection refused, authentication failure, query error during health check)
-            Log::warning("Health check for connection '{$connectionName}' failed due to PDOException: " . $e->getMessage(), [
-                'connection' => $connectionName,
-                'exception_code' => $e->getCode(),
-            ]);
+            $this->restorePdoTimeout($pdo, $originalTimeout, $connectionName); // Restore the timeout on error
+            // Check if the exception is related to a timeout (this can be driver-specific)
+            // For MySQL, code 'HY000' and a message containing 'max_statement_time exceeded' or 'Query execution was interrupted'
+            $isTimeoutError = false;
+            $errorCode = (string) $e->getCode();
+            $errorMessage = $e->getMessage();
+
+            if ($errorCode === 'HY000' &&
+                (str_contains($errorMessage, 'max_statement_time') ||
+                 str_contains($errorMessage, 'Query execution was interrupted') ||
+                 str_contains($errorMessage, 'Lock wait timeout exceeded'))
+            ) { // MySQL specific timeout errors
+                $isTimeoutError = true;
+            }
+
+            if ($isTimeoutError) {
+                Log::warning("Health check for connection '{$connectionName}' failed due to query timeout ({$timeoutSeconds}s): " . $e->getMessage(), [
+                    'connection' => $connectionName,
+                    'exception_code' => $errorCode,
+                ]);
+            } else {
+                Log::warning("Health check for connection '{$connectionName}' failed due to PDOException: " . $e->getMessage(), [
+                    'connection' => $connectionName,
+                    'exception_code' => $errorCode,
+                ]);
+            }
             return false;
         } catch (Exception $e) {
-            // Other general exceptions during connection attempt or query (e.g., connection not configured)
+            $this->restorePdoTimeout($pdo, $originalTimeout, $connectionName); // Restore the timeout on error
             Log::warning("Health check for connection '{$connectionName}' failed due to generic Exception: " . $e->getMessage(), [
                 'connection' => $connectionName,
                 'exception_code' => $e->getCode(),
-                'trace' => $e->getTraceAsString(), // Optional: for deeper debugging if needed
+                // 'trace' => $e->getTraceAsString(), // Uncomment for deeper debugging
             ]);
             return false;
+        }
+    }
+
+    /**
+     * Restores the original PDO timeout attribute if it was changed.
+     *
+     * @param \PDO|null $pdo The PDO instance.
+     * @param mixed $originalTimeout The original timeout value to restore.
+     * @param string $connectionName The name of the connection (for logging).
+     * @return void
+     */
+    private function restorePdoTimeout($pdo, $originalTimeout, string $connectionName): void
+    {
+        if ($pdo instanceof \PDO && $originalTimeout !== null && method_exists($pdo, 'setAttribute')) {
+            try {
+                // Restore only if originalTimeout was successfully retrieved and is numeric (or a valid value).
+                // PDO::ATTR_TIMEOUT expects an int. If originalTimeout was null due to a getAttribute error, don't try to set it.
+                if (is_numeric($originalTimeout)) { // Simple check, can be improved for different drivers
+                    $pdo->setAttribute(\PDO::ATTR_TIMEOUT, (int)$originalTimeout);
+                }
+            } catch (\PDOException $e) {
+                Log::warning("ConnectionHealthChecker: Could not restore PDO::ATTR_TIMEOUT for connection '{$connectionName}'. Message: {$e->getMessage()}");
+            }
         }
     }
 }

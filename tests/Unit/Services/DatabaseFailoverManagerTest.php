@@ -134,7 +134,7 @@ class DatabaseFailoverManagerTest extends TestCase
         $activeConnection = $this->manager->determineAndSetConnection();
 
         // Assert: Verify the active connection is the primary.
-        $this->assertEquals($this->primaryName, $activeConnection);
+        $this->assertSame($this->primaryName, $activeConnection);
     }
 
     /**
@@ -165,7 +165,7 @@ class DatabaseFailoverManagerTest extends TestCase
         $activeConnection = $this->manager->determineAndSetConnection();
 
         // Assert: Verify the active connection remains primary.
-        $this->assertEquals($this->primaryName, $activeConnection);
+        $this->assertSame($this->primaryName, $activeConnection);
     }
 
     /**
@@ -227,7 +227,7 @@ class DatabaseFailoverManagerTest extends TestCase
         $activeConnection = $this->manager->determineAndSetConnection();
 
         // Assert Step 2: Verify the active connection is now primary.
-        $this->assertEquals($this->primaryName, $activeConnection);
+        $this->assertSame($this->primaryName, $activeConnection);
     }
 
     /**
@@ -285,7 +285,7 @@ class DatabaseFailoverManagerTest extends TestCase
         $activeConnection = $this->manager->determineAndSetConnection();
 
         // Assert Step 2: Verify the active connection is now primary.
-        $this->assertEquals($this->primaryName, $activeConnection);
+        $this->assertSame($this->primaryName, $activeConnection);
     }
 
     /**
@@ -317,7 +317,7 @@ class DatabaseFailoverManagerTest extends TestCase
         $this->manager->forceSwitchToPrimary();
 
         // Assert: Verify that the connection indeed remains primary after the call.
-        $this->assertEquals($this->primaryName, $this->manager->getCurrentActiveConnectionName(), "Manager should still report primary as current after no-op force switch.");
+        $this->assertSame($this->primaryName, $this->manager->getCurrentActiveConnectionName(), "Manager should still report primary as current after no-op force switch.");
     }
 
     /**
@@ -379,7 +379,7 @@ class DatabaseFailoverManagerTest extends TestCase
         $activeConnection = $this->manager->determineAndSetConnection();
 
         // Assert Step 2: Verify the active connection is now failover.
-        $this->assertEquals($this->failoverName, $activeConnection);
+        $this->assertSame($this->failoverName, $activeConnection);
     }
 
     /**
@@ -410,7 +410,7 @@ class DatabaseFailoverManagerTest extends TestCase
         $activeConnection = $this->manager->determineAndSetConnection();
 
         // Assert: Verify the active connection is the blocking connection.
-        $this->assertEquals($this->blockingName, $activeConnection);
+        $this->assertSame($this->blockingName, $activeConnection);
     }
 
     /**
@@ -445,7 +445,7 @@ class DatabaseFailoverManagerTest extends TestCase
         $activeConnection = $this->manager->determineAndSetConnection();
 
         // Assert: Verify the active connection is primary.
-        $this->assertEquals($this->primaryName, $activeConnection);
+        $this->assertSame($this->primaryName, $activeConnection);
     }
 
     /**
@@ -507,7 +507,7 @@ class DatabaseFailoverManagerTest extends TestCase
         $this->manager->forceSwitchToPrimary();
 
         // Assert Step 2: Verify the manager now reports primary as the active connection.
-        $this->assertEquals($this->primaryName, $this->manager->getCurrentActiveConnectionName(), "Manager should report primary as current active connection after force switch.");
+        $this->assertSame($this->primaryName, $this->manager->getCurrentActiveConnectionName(), "Manager should report primary as current active connection after force switch.");
     }
 
     /**
@@ -571,6 +571,6 @@ class DatabaseFailoverManagerTest extends TestCase
         $this->manager->forceSwitchToPrimary();
 
         // Assert Step 2: Verify the manager now reports primary as the active connection.
-        $this->assertEquals($this->primaryName, $this->manager->getCurrentActiveConnectionName(), "Manager should report primary as current active connection after force switch from blocking.");
+        $this->assertSame($this->primaryName, $this->manager->getCurrentActiveConnectionName(), "Manager should report primary as current active connection after force switch from blocking.");
     }
 }
