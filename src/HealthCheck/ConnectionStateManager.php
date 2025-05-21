@@ -248,28 +248,41 @@ class ConnectionStateManager
      */
     public function setConnectionStatus(string $connectionName, ConnectionStatus $status, ?int $failureCount = null): void
     {
+        $finalFailureCount = $failureCount; // Placeholder, original logic to be kept
+
+        if ($failureCount === null) {
+            switch ($status) {
+                case ConnectionStatus::HEALTHY:
+                    $finalFailureCount = 0;
+                    break;
+                case ConnectionStatus::DOWN:
+                    // If setting to DOWN without a specific count, assume it met the threshold
+                    // or use a high value if threshold isn't directly relevant here.
+                    // For consistency, might be better to require explicit count for DOWN.
+                    // However, to avoid breaking existing calls, let's use a sensible default or stored one.
+                    // Reading current count if setting to DOWN without specific could be an option.
+                    $currentFailures = (int)$this->getTaggedCache()->get($this->getFailureCountCacheKey($connectionName), 0);
+                    $finalFailureCount = max($currentFailures, $this->failureThreshold); // Ensure it's at least threshold
+                    break;
+                case ConnectionStatus::UNKNOWN:
+                default:
+                    $finalFailureCount = $failureCount ?? 0; // Default to 0 if not provided for UNKNOWN
+                    break;
+            }
+        } else {
+            $finalFailureCount = $failureCount;
+        }
+
         $statusCacheKey = $this->getStatusCacheKey($connectionName);
         $failureCountCacheKey = $this->getFailureCountCacheKey($connectionName);
 
         try {
-            $cache = $this->getTaggedCache();
-            $cache->put($statusCacheKey, $status->value, $this->cacheTtlSeconds);
-            Log::info("Connection '{$connectionName}' status explicitly set to '{$status->value}'.");
-
-            $effectiveFailureCount = $failureCount;
-            if ($failureCount === null) {
-                match ($status) {
-                    ConnectionStatus::HEALTHY => $effectiveFailureCount = 0,
-                    ConnectionStatus::DOWN => $effectiveFailureCount = $this->failureThreshold,
-                    ConnectionStatus::UNKNOWN => $effectiveFailureCount = 0, // Default UNKNOWN to 0 failures
-                };
-            }
-            $cache->put($failureCountCacheKey, $effectiveFailureCount, $this->cacheTtlSeconds);
-            Log::debug("Connection '{$connectionName}' failure count set to {$effectiveFailureCount}.");
-
+            $this->getTaggedCache()->put($statusCacheKey, $status->value, $this->cacheTtlSeconds);
+            $this->getTaggedCache()->put($failureCountCacheKey, $finalFailureCount, $this->cacheTtlSeconds);
+            Log::debug("Set status for '{$connectionName}' to {$status->value} with failure count {$finalFailureCount}. TTL: {$this->cacheTtlSeconds}s.");
         } catch (\Exception $e) {
-            Log::critical("Cache Exception: Failed to explicitly set connection status for '{$connectionName}': " . $e->getMessage(), [
-                'connection' => $connectionName, 'status' => $status->value, 'exception' => $e
+            Log::critical("Cache Exception: Failed to set connection state for '{$connectionName}': " . $e->getMessage(), [
+                'connection' => $connectionName, 'status' => $status->value, 'failure_count' => $finalFailureCount, 'exception' => $e
             ]);
             $this->events->dispatch(new CacheUnavailableEvent($e));
         }

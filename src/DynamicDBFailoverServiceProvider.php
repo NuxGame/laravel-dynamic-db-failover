@@ -5,6 +5,8 @@ namespace Nuxgame\LaravelDynamicDBFailover;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Database\DatabaseManager as IlluminateDBManager; // Alias to avoid conflict
 use Illuminate\Contracts\Events\Dispatcher as EventDispatcherContract;
+use Illuminate\Contracts\Console\Kernel as ConsoleKernelContract; // Added for scheduling
+use Illuminate\Console\Scheduling\Schedule; // Added for scheduling
 use Nuxgame\LaravelDynamicDBFailover\Console\Commands\CheckDatabaseHealthCommand;
 use Nuxgame\LaravelDynamicDBFailover\Database\BlockingConnection;
 use Nuxgame\LaravelDynamicDBFailover\Services\DatabaseFailoverManager;
@@ -12,6 +14,7 @@ use Nuxgame\LaravelDynamicDBFailover\HealthCheck\ConnectionStateManager;
 use Nuxgame\LaravelDynamicDBFailover\HealthCheck\ConnectionHealthChecker;
 use Illuminate\Contracts\Config\Repository as ConfigRepositoryContract;
 use Illuminate\Contracts\Cache\Factory as CacheFactoryContract; // Use Cache Factory for store resolution
+use Illuminate\Support\Facades\Log; // Added for logging
 
 /**
  * Class DynamicDBFailoverServiceProvider
@@ -100,6 +103,9 @@ class DynamicDBFailoverServiceProvider extends ServiceProvider
                 __DIR__.'/../config/dynamic_db_failover.php' => config_path('dynamic_db_failover.php'),
             ], 'config');
 
+            // Schedule the health check command
+            $this->scheduleHealthChecks();
+
             // Placeholder for publishing migrations if needed in the future.
             // $this->publishes([
             //     __DIR__.'/../database/migrations/' => database_path('migrations'),
@@ -146,6 +152,47 @@ class DynamicDBFailoverServiceProvider extends ServiceProvider
                 );
             }
         }
+    }
+
+    /**
+     * Schedules the database health check command based on package configuration.
+     *
+     * @return void
+     */
+    protected function scheduleHealthChecks(): void
+    {
+        $this->app->booted(function () {
+            /** @var ConfigRepositoryContract $config */
+            $config = $this->app->make(ConfigRepositoryContract::class);
+
+            if (!$this->app->runningInConsole() || !$this->app->bound(Schedule::class)) {
+                return;
+            }
+
+            /** @var Schedule $schedule */
+            $schedule = $this->app->make(Schedule::class);
+            $command = $schedule->command(CheckDatabaseHealthCommand::class);
+
+            $scheduleFrequency = $config->get('dynamic_db_failover.health_check.schedule_frequency', 'everySecond');
+
+            switch (strtolower($scheduleFrequency)) {
+                case 'everysecond':
+                    $command->everySecond();
+                    Log::info('DynamicDBFailover: Health check command scheduled to run every second.');
+                    break;
+                case 'everyminute':
+                    $command->everyMinute();
+                    Log::info('DynamicDBFailover: Health check command scheduled to run every minute.');
+                    break;
+                case 'disabled':
+                    Log::info('DynamicDBFailover: Automatic health check command scheduling is disabled by configuration.');
+                    break;
+                default:
+                    $command->everySecond();
+                    Log::warning('DynamicDBFailover: Unknown schedule_frequency value \"' . $scheduleFrequency . '\". Defaulting to everySecond.');
+                    break;
+            }
+        });
     }
 
     /**

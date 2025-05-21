@@ -383,7 +383,7 @@ class FullFailoverCycleTest extends TestCase
         // --- Step 1: Initial state - Primary UP and active ---
         Log::info("TEST STEP 1: Initial state, primary should be healthy and active.");
         $checkAndUpdate(); // Check both connections; primary should be found healthy.
-        $this->assertEquals($this->primaryConnectionName, DB::getDefaultConnection(), "Step 1 Failed: Default connection should be primary.");
+        $this->assertSame($this->primaryConnectionName, DB::getDefaultConnection(), "Step 1 Failed: Default connection should be primary.");
         DB::purge($this->primaryConnectionName); // Ensure next DB call uses fresh connection details.
         DB::connection($this->primaryConnectionName)->select('SELECT 1'); // Verify connectivity.
         // No SwitchedToPrimary/Failover event expected if it initializes to primary correctly.
@@ -392,7 +392,7 @@ class FullFailoverCycleTest extends TestCase
         Log::info("TEST STEP 2: Primary goes down, system should switch to failover.");
         $this->simulateConnectionDown($this->primaryConnectionName);
         $checkAndUpdate($this->primaryConnectionName); // Check primary; it will fail (threshold is 1).
-        $this->assertEquals($this->failoverConnectionName, DB::getDefaultConnection(), "Step 2 Failed: Default connection should be failover.");
+        $this->assertSame($this->failoverConnectionName, DB::getDefaultConnection(), "Step 2 Failed: Default connection should be failover.");
         DB::purge($this->failoverConnectionName);
         DB::connection($this->failoverConnectionName)->select('SELECT 1'); // Verify failover connectivity.
         Event::assertDispatched(SwitchedToFailoverConnectionEvent::class, function ($event) {
@@ -405,7 +405,7 @@ class FullFailoverCycleTest extends TestCase
         Log::info("TEST STEP 3: Failover also goes down, system should switch to blocking (LFM).");
         $this->simulateConnectionDown($this->failoverConnectionName);
         $checkAndUpdate($this->failoverConnectionName); // Check failover; it will also fail.
-        $this->assertEquals($this->blockingConnectionName, DB::getDefaultConnection(), "Step 3 Failed: Default connection should be blocking.");
+        $this->assertSame($this->blockingConnectionName, DB::getDefaultConnection(), "Step 3 Failed: Default connection should be blocking.");
         Event::assertDispatched(LimitedFunctionalityModeActivatedEvent::class, function ($event) {
             return $event->connectionName === $this->blockingConnectionName;
         });
@@ -429,7 +429,7 @@ class FullFailoverCycleTest extends TestCase
         Log::info("TEST STEP 4: Primary comes back online, system should switch back to primary and exit LFM.");
         $this->simulateConnectionUp($this->primaryConnectionName);
         $checkAndUpdate($this->primaryConnectionName); // Check primary; it should be found healthy.
-        $this->assertEquals($this->primaryConnectionName, DB::getDefaultConnection(), "Step 4 Failed: Default connection should be restored to primary.");
+        $this->assertSame($this->primaryConnectionName, DB::getDefaultConnection(), "Step 4 Failed: Default connection should be restored to primary.");
         DB::purge($this->primaryConnectionName);
         DB::connection($this->primaryConnectionName)->select('SELECT 1'); // Verify primary connectivity.
         Event::assertDispatched(PrimaryConnectionRestoredEvent::class, function ($event) {
