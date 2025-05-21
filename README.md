@@ -58,11 +58,14 @@ The service provider will be automatically registered.
     *   `health_check`:
         *   `query`: The SQL query to execute for health checks.
         *   `failure_threshold`: Number of consecutive failures before a connection is marked as down.
+        *   `timeout_seconds`: Timeout in seconds specifically for the health check query execution. The package attempts to set this timeout directly on the PDO connection for the duration of the health check. Default is 2 seconds.
+        *   `schedule_frequency`: Defines how often the `failover:health-check` command is scheduled by this package. 
+            Possible values: `'everyMinute'`, `'everySecond'`, `'disabled'`. Default is `'everySecond'`. 
+            If `'disabled'`, the package will not schedule the command, and you would need to schedule it manually if desired.
     *   `cache`:
         *   `store`: The cache store to use for storing connection statuses (e.g., `redis`, `file`).
         *   `prefix`: Prefix for cache keys.
         *   `ttl_seconds`: Time-to-live for connection status in cache.
-    *   `events`: Configure which events from this package should be dispatched globally.
 
 ## Usage
 
@@ -70,7 +73,7 @@ Once configured and enabled, the package works automatically. The `DynamicDBFail
 
 ### Artisan Command
 
-You can run health checks manually or schedule them via the Laravel Task Scheduler:
+The package includes an Artisan command `failover:health-check` to perform health assessments on your database connections.
 
 ```bash
 php artisan failover:health-check
@@ -79,6 +82,11 @@ To check a specific connection:
 ```bash
 php artisan failover:health-check your_connection_name
 ```
+
+**Automated Scheduling:**
+
+By default, this package will automatically schedule the `failover:health-check` command to run based on the `health_check.schedule_frequency` setting in the `config/dynamic_db_failover.php` file. 
+The default frequency is `'everySecond'`. You can change this to `'everyMinute'` or set it to `'disabled'` if you prefer to manage the scheduling manually through your application's `App/Console/Kernel.php` file.
 
 ### Events
 

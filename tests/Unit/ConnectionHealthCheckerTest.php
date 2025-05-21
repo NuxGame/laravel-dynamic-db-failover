@@ -103,15 +103,44 @@ class ConnectionHealthCheckerTest extends TestCase
      */
     public function test_is_healthy_returns_true_for_successful_query(): void
     {
+        // Mock PDO object
+        $pdoMock = \Mockery::mock(\PDO::class);
+
+        // Configure config mock
         // @phpstan-ignore-next-line
         $this->configMock->shouldReceive('get')
             ->with('dynamic_db_failover.health_check.query', 'SELECT 1')
             ->andReturn('SELECT 1');
         // @phpstan-ignore-next-line
+        $this->configMock->shouldReceive('get')
+            ->with('dynamic_db_failover.health_check.timeout_seconds', 2)
+            ->andReturn(2);
+
+        // Configure connection mock
+        // @phpstan-ignore-next-line
+        $this->connectionMock->shouldReceive('getPdo')
+            ->once()
+            ->andReturn($pdoMock);
+        // @phpstan-ignore-next-line
         $this->connectionMock->shouldReceive('unprepared')
             ->with('SELECT 1')
             ->once()
             ->andReturn(true);
+
+        // Configure PDO mock
+        // @phpstan-ignore-next-line
+        $pdoMock->shouldReceive('getAttribute')
+            ->with(\PDO::ATTR_TIMEOUT)
+            ->once()
+            ->andReturn(60); // Return some default timeout
+        // @phpstan-ignore-next-line
+        $pdoMock->shouldReceive('setAttribute')
+            ->with(\PDO::ATTR_TIMEOUT, 2)
+            ->once();
+        // @phpstan-ignore-next-line
+        $pdoMock->shouldReceive('setAttribute')
+            ->with(\PDO::ATTR_TIMEOUT, 60)
+            ->once();
 
         $healthChecker = $this->createHealthChecker();
         $this->assertTrue($healthChecker->isHealthy('mysql'), 'Health check should return true for a healthy connection.');
@@ -124,15 +153,44 @@ class ConnectionHealthCheckerTest extends TestCase
      */
     public function test_is_healthy_returns_false_on_pdo_exception(): void
     {
+        // Mock PDO object
+        $pdoMock = \Mockery::mock(\PDO::class);
+
+        // Configure config mock
         // @phpstan-ignore-next-line
         $this->configMock->shouldReceive('get')
             ->with('dynamic_db_failover.health_check.query', 'SELECT 1')
             ->andReturn('SELECT 1');
         // @phpstan-ignore-next-line
+        $this->configMock->shouldReceive('get')
+            ->with('dynamic_db_failover.health_check.timeout_seconds', 2)
+            ->andReturn(2);
+
+        // Configure connection mock
+        // @phpstan-ignore-next-line
+        $this->connectionMock->shouldReceive('getPdo')
+            ->once()
+            ->andReturn($pdoMock);
+        // @phpstan-ignore-next-line
         $this->connectionMock->shouldReceive('unprepared')
             ->with('SELECT 1')
             ->once()
             ->andThrow(new PDOException('Connection refused'));
+
+        // Configure PDO mock
+        // @phpstan-ignore-next-line
+        $pdoMock->shouldReceive('getAttribute')
+            ->with(\PDO::ATTR_TIMEOUT)
+            ->once()
+            ->andReturn(60); // Return some default timeout
+        // @phpstan-ignore-next-line
+        $pdoMock->shouldReceive('setAttribute')
+            ->with(\PDO::ATTR_TIMEOUT, 2)
+            ->once();
+        // @phpstan-ignore-next-line
+        $pdoMock->shouldReceive('setAttribute')
+            ->with(\PDO::ATTR_TIMEOUT, 60)
+            ->once();
 
         $healthChecker = $this->createHealthChecker();
         $this->assertFalse($healthChecker->isHealthy('mysql'), 'Health check should return false when a PDOException occurs.');
@@ -145,15 +203,44 @@ class ConnectionHealthCheckerTest extends TestCase
      */
     public function test_is_healthy_returns_false_on_generic_exception(): void
     {
+        // Mock PDO object
+        $pdoMock = \Mockery::mock(\PDO::class);
+
+        // Configure config mock
         // @phpstan-ignore-next-line
         $this->configMock->shouldReceive('get')
             ->with('dynamic_db_failover.health_check.query', 'SELECT 1')
             ->andReturn('SELECT 1');
         // @phpstan-ignore-next-line
+        $this->configMock->shouldReceive('get')
+            ->with('dynamic_db_failover.health_check.timeout_seconds', 2)
+            ->andReturn(2);
+
+        // Configure connection mock
+        // @phpstan-ignore-next-line
+        $this->connectionMock->shouldReceive('getPdo')
+            ->once()
+            ->andReturn($pdoMock);
+        // @phpstan-ignore-next-line
         $this->connectionMock->shouldReceive('unprepared')
             ->with('SELECT 1')
             ->once()
             ->andThrow(new Exception('Something went wrong'));
+
+        // Configure PDO mock
+        // @phpstan-ignore-next-line
+        $pdoMock->shouldReceive('getAttribute')
+            ->with(\PDO::ATTR_TIMEOUT)
+            ->once()
+            ->andReturn(60); // Return some default timeout
+        // @phpstan-ignore-next-line
+        $pdoMock->shouldReceive('setAttribute')
+            ->with(\PDO::ATTR_TIMEOUT, 2)
+            ->once();
+        // @phpstan-ignore-next-line
+        $pdoMock->shouldReceive('setAttribute')
+            ->with(\PDO::ATTR_TIMEOUT, 60)
+            ->once();
 
         $healthChecker = $this->createHealthChecker();
         $this->assertFalse($healthChecker->isHealthy('mysql'), 'Health check should return false when a generic Exception occurs.');
@@ -167,19 +254,48 @@ class ConnectionHealthCheckerTest extends TestCase
     public function test_is_healthy_uses_configured_query(): void
     {
         $customQuery = 'SELECT name FROM users LIMIT 1';
+
+        // Mock PDO object
+        $pdoMock = \Mockery::mock(\PDO::class);
+
+        // Configure config mock
         // Ensure config mock returns the custom query
         // @phpstan-ignore-next-line
         $this->configMock->shouldReceive('get')
             ->with('dynamic_db_failover.health_check.query', 'SELECT 1')
             ->once()
             ->andReturn($customQuery);
+        // @phpstan-ignore-next-line
+        $this->configMock->shouldReceive('get')
+            ->with('dynamic_db_failover.health_check.timeout_seconds', 2)
+            ->andReturn(2);
 
+        // Configure connection mock
+        // @phpstan-ignore-next-line
+        $this->connectionMock->shouldReceive('getPdo')
+            ->once()
+            ->andReturn($pdoMock);
         // Ensure the 'mysql' connection (which is $this->connectionMock) expects the custom query
         // @phpstan-ignore-next-line
         $this->connectionMock->shouldReceive('unprepared')
             ->with($customQuery)
             ->once()
             ->andReturn(true);
+
+        // Configure PDO mock
+        // @phpstan-ignore-next-line
+        $pdoMock->shouldReceive('getAttribute')
+            ->with(\PDO::ATTR_TIMEOUT)
+            ->once()
+            ->andReturn(60); // Return some default timeout
+        // @phpstan-ignore-next-line
+        $pdoMock->shouldReceive('setAttribute')
+            ->with(\PDO::ATTR_TIMEOUT, 2)
+            ->once();
+        // @phpstan-ignore-next-line
+        $pdoMock->shouldReceive('setAttribute')
+            ->with(\PDO::ATTR_TIMEOUT, 60)
+            ->once();
 
         $healthChecker = $this->createHealthChecker();
         $this->assertTrue($healthChecker->isHealthy('mysql'), 'Health check should use the configured query.');
@@ -196,6 +312,10 @@ class ConnectionHealthCheckerTest extends TestCase
         $this->configMock->shouldReceive('get') // Still need config for the query key, even if connection fails
             ->with('dynamic_db_failover.health_check.query', 'SELECT 1')
             ->andReturn('SELECT 1');
+        // @phpstan-ignore-next-line
+        $this->configMock->shouldReceive('get')
+            ->with('dynamic_db_failover.health_check.timeout_seconds', 2)
+            ->andReturn(2);
 
         // Specifically for 'non_existent_connection', dbManager should throw an exception
         // @phpstan-ignore-next-line
