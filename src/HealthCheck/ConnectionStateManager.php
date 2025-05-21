@@ -91,7 +91,9 @@ class ConnectionStateManager
     protected function getTaggedCache(): CacheRepositoryContract
     {
         if (!empty($this->cacheTag) && method_exists($this->cache->getStore(), 'tags')) {
-            return $this->cache->tags($this->cacheTag);
+            /** @var \Illuminate\Cache\Repository $cache */
+            $cache = $this->cache;
+            return $cache->tags($this->cacheTag);
         }
         return $this->cache;
     }
@@ -312,8 +314,10 @@ class ConnectionStateManager
         try {
             if (!empty($this->cacheTag) && method_exists($this->cache->getStore(), 'tags')) {
                 // When tags are supported and configured, flush only the tagged entries.
-                /** @var \Illuminate\Cache\TaggedCache $taggedCache */
-                $taggedCache = $this->cache->tags($this->cacheTag);
+                /** @var \Illuminate\Cache\Repository $cache */
+                $cache = $this->cache;
+                /** @var \\Illuminate\\Cache\\TaggedCache $taggedCache */
+                $taggedCache = $cache->tags($this->cacheTag);
                 $taggedCache->flush();
                 Log::info("All dynamic DB failover statuses flushed from cache using tag '{$this->cacheTag}'.");
             } else {
