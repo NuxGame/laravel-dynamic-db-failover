@@ -34,23 +34,24 @@ return [
     | Health Check Settings
     |--------------------------------------------------------------------------
     |
-    | Common health check parameters applicable to both primary and failover
-    | connections.
+    | Configuration for the health checking mechanism.
     |
     */
     'health_check' => [
-        // The SQL query to execute for the health check.
-        // It should be a lightweight query, e.g., 'SELECT 1'.
-        'query' => 'SELECT 1',
+        // Number of consecutive failures before a connection is marked as DOWN.
+        'failure_threshold' => env('DB_FAILOVER_FAILURE_THRESHOLD', 3),
 
-        // The interval in seconds between health checks.
-        'interval_seconds' => 60,
+        // Query to execute for health checks. Should be a lightweight query.
+        'query' => env('DB_FAILOVER_HEALTH_QUERY', 'SELECT 1'),
 
-        // Timeout for the health check query in seconds.
-        'timeout_seconds' => 5,
+        // Timeout in seconds for the health check query execution.
+        'timeout_seconds' => env('DB_FAILOVER_HEALTH_TIMEOUT', 2),
 
-        // Number of consecutive failures to declare a connection unavailable.
-        'failure_threshold' => 3,
+        // Defines how often the health check command is scheduled by this package.
+        // Possible values: 'everyMinute', 'everySecond', 'disabled'.
+        // If 'disabled', the package will not schedule the command.
+        // Default: 'everySecond'.
+        'schedule_frequency' => env('DB_FAILOVER_HEALTH_SCHEDULE_FREQUENCY', 'everySecond'),
     ],
 
     /*
@@ -98,20 +99,4 @@ return [
     |
     */
     'tag' => 'dynamic-db-failover',
-
-    /*
-    |--------------------------------------------------------------------------
-    | Health Check Schedule
-    |--------------------------------------------------------------------------
-    |
-    | Configure how often the `failover:health-check` command should run.
-    | This is a cron expression string. Default is every minute.
-    | You need to add this command to your Laravel application's console kernel.
-    |
-    | Example Kernel entry:
-    |   $schedule->command('failover:health-check')
-    |            ->cron(config('dynamic_db_failover.health_check.schedule_cron', '* * * * *'));
-    |
-    */
-    'health_check_schedule_cron' => env('DYNAMIC_DB_FAILOVER_HEALTH_CHECK_CRON', '* * * * *'),
 ];
