@@ -113,7 +113,7 @@ class DatabaseFailoverManagerTest extends TestCase
      * - `determineAndSetConnection` returns the primary connection name.
      * - A `SwitchedToPrimaryConnectionEvent` is dispatched with previousConnectionName as null.
      */
-    public function test_determine_and_set_connection_uses_primary_on_initial_call_if_healthy()
+    public function testDetermineAndSetConnectionUsesPrimaryOnInitialCallIfHealthy(): void
     {
         // Arrange: Mock ConnectionStateManager to report both primary and failover as healthy.
         $this->stateManagerMock->shouldReceive('getConnectionStatus')->with($this->primaryName)->andReturn(ConnectionStatus::HEALTHY);
@@ -143,7 +143,7 @@ class DatabaseFailoverManagerTest extends TestCase
      * Verifies that `determineAndSetConnection` does not dispatch a `SwitchedToPrimaryConnectionEvent`
      * if the system is already on the primary connection and it remains healthy.
      */
-    public function test_determine_and_set_connection_uses_primary_when_already_primary_and_healthy_no_event()
+    public function testDetermineAndSetConnectionUsesPrimaryWhenAlreadyPrimaryAndHealthyNoEvent(): void
     {
         // Arrange: Simulate that the manager believes it's already on primary.
         // This is done by directly setting the internal currentActiveConnectionName state of the manager.
@@ -176,7 +176,7 @@ class DatabaseFailoverManagerTest extends TestCase
      * 2. The primary connection recovers and becomes healthy.
      * 3. The manager should switch back to the primary connection and dispatch the `SwitchedToPrimaryConnectionEvent`.
      */
-    public function test_determine_and_set_connection_switches_to_primary_from_failover()
+    public function testDetermineAndSetConnectionSwitchesToPrimaryFromFailover(): void
     {
         // Arrange Step 1: Simulate system is initially on failover.
         // Mock primary as DOWN and failover as HEALTHY for the first call to determineAndSetConnection.
@@ -231,13 +231,10 @@ class DatabaseFailoverManagerTest extends TestCase
     }
 
     /**
-     * Test that the system uses the primary connection when it's healthy.
-     *
-     * This is similar to `test_determine_and_set_connection_switches_to_primary_from_failover`
-     * but structured to clearly show the transition from an initial failover state to primary.
-     * It ensures that if the primary is available, it is preferred.
+     * Test that the primary connection is used when it's healthy and failover is down.
+     * This validates the system's preference for the primary connection.
      */
-    public function test_determine_and_set_connection_uses_primary_when_healthy()
+    public function testDetermineAndSetConnectionUsesPrimaryWhenHealthy(): void
     {
         // This test verifies switching to Primary when it's healthy,
         // assuming the system was previously on Failover.
@@ -289,14 +286,10 @@ class DatabaseFailoverManagerTest extends TestCase
     }
 
     /**
-     * Test that forcing a switch to primary when already on primary dispatches no event.
-     *
-     * Verifies that `forceSwitchToPrimary` correctly sets connection statuses (primary and failover to HEALTHY)
-     * via the ConnectionStateManager but does not dispatch a `SwitchedToPrimaryConnectionEvent`
-     * if the system is already using the primary connection. It also ensures that an
-     * `ExitedLimitedFunctionalityModeEvent` is not dispatched if not in LFM.
+     * Test that forcing a switch to the primary connection when already on the primary
+     * does not result in any event dispatches or unnecessary operations.
      */
-    public function test_force_switch_to_primary_when_already_primary_no_event()
+    public function testForceSwitchToPrimaryWhenAlreadyPrimaryNoEvent(): void
     {
         // Arrange: Simulate manager already being on the primary connection by setting its internal state.
         $reflection = new \ReflectionObject($this->manager);
@@ -321,15 +314,9 @@ class DatabaseFailoverManagerTest extends TestCase
     }
 
     /**
-     * Test switching from primary to failover when primary becomes unhealthy.
-     *
-     * This test simulates a scenario where:
-     * 1. The system is initially on the primary connection and it's healthy.
-     * 2. The primary connection goes down.
-     * 3. The failover connection is healthy.
-     * 4. The manager should switch to the failover connection and dispatch `SwitchedToFailoverConnectionEvent`.
+     * Test switching to failover when primary is down.
      */
-    public function test_determine_and_set_connection_switches_to_failover()
+    public function testDetermineAndSetConnectionSwitchesToFailover(): void
     {
         // Arrange Step 1: Ensure current connection is Primary and it's HEALTHY.
         // Mock primary and failover as HEALTHY for the first call to determineAndSetConnection.
@@ -383,13 +370,9 @@ class DatabaseFailoverManagerTest extends TestCase
     }
 
     /**
-     * Test switching to the blocking connection (Limited Functionality Mode) when both primary and failover are down.
-     *
-     * Verifies that:
-     * - `determineAndSetConnection` returns the blocking connection name (`test_blocking_db`).
-     * - A `LimitedFunctionalityModeActivatedEvent` is dispatched, indicating the system has entered LFM.
+     * Test switching to blocking when both primary and failover are down.
      */
-    public function test_determine_and_set_connection_switches_to_blocking()
+    public function testDetermineAndSetConnectionSwitchesToBlocking(): void
     {
         // Arrange: Mock ConnectionStateManager to report both primary and failover as DOWN.
         $this->stateManagerMock->shouldReceive('getConnectionStatus')->with($this->primaryName)->andReturn(ConnectionStatus::DOWN);
@@ -414,17 +397,9 @@ class DatabaseFailoverManagerTest extends TestCase
     }
 
     /**
-     * Test that the system defaults to the primary connection if cache is unavailable (statuses are UNKNOWN).
-     *
-     * This scenario simulates a situation where the ConnectionStateManager cannot determine the actual
-     * status of connections (e.g., cache is down), returning UNKNOWN. In such cases, the system
-     * should optimistically attempt to use the primary connection.
-     *
-     * Verifies that:
-     * - `determineAndSetConnection` returns the primary connection name.
-     * - A `SwitchedToPrimaryConnectionEvent` is dispatched.
+     * Test that we default to primary if cache is unavailable.
      */
-    public function test_determine_and_set_connection_defaults_to_primary_if_cache_unavailable_scenario()
+    public function testDetermineAndSetConnectionDefaultsToPrimaryIfCacheUnavailableScenario(): void
     {
         // Arrange: Mock ConnectionStateManager to report both connections as UNKNOWN (simulating cache failure).
         $this->stateManagerMock->shouldReceive('getConnectionStatus')->with($this->primaryName)->andReturn(ConnectionStatus::UNKNOWN);
@@ -449,16 +424,9 @@ class DatabaseFailoverManagerTest extends TestCase
     }
 
     /**
-     * Test that forcing a switch to primary correctly sets the primary connection and dispatches the event.
-     *
-     * This test simulates a scenario where the system might be on the failover connection,
-     * and `forceSwitchToPrimary` is called. It should:
-     * 1. Set both primary and failover connection statuses to HEALTHY via ConnectionStateManager.
-     * 2. Set the primary connection as the active one.
-     * 3. Dispatch a `SwitchedToPrimaryConnectionEvent`.
-     * It ensures `ExitedLimitedFunctionalityModeEvent` is NOT dispatched if not previously in LFM.
+     * Test forcing a switch to primary.
      */
-    public function test_force_switch_to_primary_sets_primary_and_dispatches_event()
+    public function testForceSwitchToPrimarySetsAndDispatchesEvent(): void
     {
         // Arrange Step 1: Simulate being on Failover connection initially.
         // To do this, first make primary DOWN and failover HEALTHY, then call determineAndSetConnection.
@@ -511,16 +479,9 @@ class DatabaseFailoverManagerTest extends TestCase
     }
 
     /**
-     * Test that forcing a switch to primary from blocking mode dispatches relevant exit events.
-     *
-     * This test simulates a scenario where the system is in Limited Functionality Mode (LFM),
-     * using the blocking connection. When `forceSwitchToPrimary` is called:
-     * 1. Both primary and failover statuses should be set to HEALTHY via ConnectionStateManager.
-     * 2. The primary connection should become active.
-     * 3. A `SwitchedToPrimaryConnectionEvent` should be dispatched (from blocking to primary).
-     * 4. An `ExitedLimitedFunctionalityModeEvent` should be dispatched, signaling recovery to primary.
+     * Test exiting limited functionality mode when switching from blocking.
      */
-    public function test_force_switch_to_primary_from_blocking_dispatches_exit_event()
+    public function testForceSwitchToPrimaryFromBlockingDispatchesExitEvent(): void
     {
         // Arrange Step 1: Simulate being on Blocking connection initially.
         // Make both Primary and Failover DOWN, then call determineAndSetConnection.
