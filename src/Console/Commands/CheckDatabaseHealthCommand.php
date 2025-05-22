@@ -58,7 +58,7 @@ class CheckDatabaseHealthCommand extends Command
      */
     public function handle()
     {
-        $this->info('Starting database health checks...');
+        Log::channel('db_health_checks')->info('Starting database health checks...');
 
         $specificConnection = $this->argument('connection');
         $connectionsToWatch = [];
@@ -66,12 +66,11 @@ class CheckDatabaseHealthCommand extends Command
         if ($specificConnection) {
             // Validate if the specific connection exists in the database configurations.
             if (!$this->config->has("database.connections.{$specificConnection}")) {
-                $this->error("Connection '{$specificConnection}' is not configured in your database settings.");
-                Log::error("Attempted health check for unconfigured connection: {$specificConnection}");
+                Log::channel('db_health_checks')->error("Connection '{$specificConnection}' is not configured in your database settings.");
                 return Command::FAILURE;
             }
             $connectionsToWatch[] = $specificConnection;
-            $this->info("Performing health check for specific connection: {$specificConnection}");
+            Log::channel('db_health_checks')->info("Performing health check for specific connection: {$specificConnection}");
         } else {
             // If no specific connection is given, check primary and failover connections from config.
             $primaryConnection = $this->config->get('dynamic_db_failover.connections.primary');
@@ -84,11 +83,11 @@ class CheckDatabaseHealthCommand extends Command
                 $connectionsToWatch[] = $failoverConnection;
             }
 
-            $this->info('Performing health checks for configured primary and failover connections.');
+            Log::channel('db_health_checks')->info('Performing health checks for configured primary and failover connections.');
         }
 
         if (empty($connectionsToWatch)) {
-            $this->warn('No connections configured or specified for health check.');
+            Log::channel('db_health_checks')->warning('No connections configured or specified for health check.');
             return Command::SUCCESS;
         }
 
@@ -98,21 +97,20 @@ class CheckDatabaseHealthCommand extends Command
                 continue;
             }
 
-            $this->line("Checking health of connection: {$connectionName}...");
+            Log::channel('db_health_checks')->info("Checking health of connection: {$connectionName}...");
             try {
                 $this->stateManager->updateConnectionStatus($connectionName);
                 // The ConnectionStateManager itself might log detailed reasons for status changes (e.g., on health check failure).
                 // Here, we retrieve and display the resulting status and failure count.
                 $status = $this->stateManager->getConnectionStatus($connectionName);
                 $failures = $this->stateManager->getFailureCount($connectionName);
-                $this->info("Connection '{$connectionName}' status: {$status->value}, Failures: {$failures}");
+                Log::channel('db_health_checks')->info("Connection '{$connectionName}' status: {$status->value}, Failures: {$failures}");
             } catch (\Exception $e) {
-                $this->error("Failed to check health for connection '{$connectionName}': " . $e->getMessage());
-                Log::error("Health check command failed for connection '{$connectionName}': ", ['exception' => $e]);
+                Log::channel('db_health_checks')->error("Failed to check health for connection '{$connectionName}': " . $e->getMessage(), ['exception' => $e]);
             }
         }
 
-        $this->info('Database health checks completed.');
+        Log::channel('db_health_checks')->info('Database health checks completed.');
         return Command::SUCCESS;
     }
 }
