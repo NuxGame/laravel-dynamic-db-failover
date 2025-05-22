@@ -171,3 +171,118 @@ Please ensure tests pass before submitting a PR.
 ## License
 
 The Laravel Dynamic Database Failover package is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT). 
+
+## Class Diagram
+
+The following diagram illustrates the main classes of the package and their relationships.
+
+```mermaid
+classDiagram
+    direction LR
+
+    class DynamicDBFailoverServiceProvider {
+        +register()
+        +boot()
+        +scheduleHealthChecks()
+    }
+
+    class DatabaseFailoverManager {
+        -config: ConfigRepository
+        -stateManager: ConnectionStateManager
+        -dbManager: IlluminateDBManager
+        -events: EventDispatcher
+        +determineAndSetConnection()
+        +switchToPrimary()
+        +switchToFailover()
+        +switchToBlocking()
+    }
+
+    class ConnectionStateManager {
+        -healthChecker: ConnectionHealthChecker
+        -cache: CacheRepositoryContract
+        -config: ConfigRepository
+        -events: EventDispatcher
+        +updateConnectionStatus(connectionName)
+        +getConnectionStatus(connectionName): ConnectionStatus
+        +getFailureCount(connectionName): int
+        +setConnectionStatus(connectionName, status, failureCount)
+    }
+
+    class ConnectionHealthChecker {
+        -dbManager: IlluminateDBManager
+        -config: ConfigRepository
+        +isHealthy(connectionName): bool
+    }
+
+    class CheckDatabaseHealthCommand {
+        -stateManager: ConnectionStateManager
+        -config: ConfigRepository
+        +handle()
+    }
+
+    class BlockingConnection {
+        +select()
+        +insert()
+        +update()
+        +delete()
+    }
+
+    class ConnectionStatus {
+        <<Enumeration>>
+        HEALTHY
+        DOWN
+        UNKNOWN
+    }
+
+    class EventDispatcher
+    class ConfigRepository
+    class IlluminateDBManager
+    class CacheRepositoryContract
+    class CacheFactoryContract
+
+    DynamicDBFailoverServiceProvider --> DatabaseFailoverManager : uses
+    DynamicDBFailoverServiceProvider --> ConnectionStateManager : uses
+    DynamicDBFailoverServiceProvider --> ConnectionHealthChecker : uses
+    DynamicDBFailoverServiceProvider ..> CheckDatabaseHealthCommand : registers
+
+    DatabaseFailoverManager o-- ConfigRepository
+    DatabaseFailoverManager o-- ConnectionStateManager
+    DatabaseFailoverManager o-- IlluminateDBManager
+    DatabaseFailoverManager o-- EventDispatcher
+    DatabaseFailoverManager ..> Events : dispatches
+
+    ConnectionStateManager o-- ConnectionHealthChecker
+    ConnectionStateManager o-- ConfigRepository
+    ConnectionStateManager o-- EventDispatcher
+    ConnectionStateManager o-- CacheFactoryContract
+    ConnectionStateManager --> CacheRepositoryContract : uses
+    ConnectionStateManager ..> ConnectionStatus : uses
+    ConnectionStateManager ..> Events : dispatches
+
+    ConnectionHealthChecker o-- IlluminateDBManager
+    ConnectionHealthChecker o-- ConfigRepository
+
+    CheckDatabaseHealthCommand o-- ConnectionStateManager
+    CheckDatabaseHealthCommand o-- ConfigRepository
+
+    BlockingConnection --|> Illuminate\Database\Connection
+    BlockingConnection ..> Exceptions.BlockingConnectionUsedException : throws
+
+    namespace Events {
+        class CacheUnavailableEvent
+        class ConnectionHealthyEvent
+        class DefaultConnectionChangedEvent
+        class FailoverConnectionDownEvent
+        class FailoverConnectionRestoredEvent
+        class FullFunctionalityModeEvent
+        class LimitedFunctionalityModeEvent
+        class PrimaryConnectionDownEvent
+        class PrimaryConnectionRestoredEvent
+    }
+    namespace Exceptions {
+        class BlockingConnectionUsedException
+        class InvalidConnectionStatusException
+    }
+```
+
+This diagram can be rendered by any Markdown viewer that supports Mermaid.js (e.g., GitHub, GitLab, or IDE plugins).
