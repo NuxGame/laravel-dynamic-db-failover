@@ -16,6 +16,19 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Command Lifecycle Events
+    |--------------------------------------------------------------------------
+    |
+    | Set this to true to dispatch DBHealthCheckCommandStarted and
+    | DBHealthCheckCommandFinished events during the health check command.
+    | This can be overridden by a command-line option.
+    | Default for the package is false, can be overridden in app config.
+    |
+    */
+    'dispatch_command_lifecycle_events' => env('DYNAMIC_DB_FAILOVER_DISPATCH_LIFECYCLE_EVENTS', false),
+
+    /*
+    |--------------------------------------------------------------------------
     | Database Connection Names
     |--------------------------------------------------------------------------
     |
@@ -25,8 +38,8 @@ return [
     */
     'connections' => [
         'primary' => env('DB_CONNECTION', 'mysql'),
-        'failover' => 'mysql_failover', // Example, ensure this connection is configured
-        'blocking' => 'blocking_connection', // Example, ensure this connection is configured
+        'failover' => env('DB_FAILOVER_CONNECTION', 'mysql_failover'), // Use env variable
+        'blocking' => env('DB_BLOCKING_CONNECTION', 'blocking_connection'), // Use env variable
     ],
 
     /*

@@ -6,6 +6,9 @@ use Illuminate\Console\Command;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Nuxgame\LaravelDynamicDBFailover\HealthCheck\ConnectionStateManager;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Event;
+use Nuxgame\LaravelDynamicDBFailover\Events\DBHealthCheckCommandStarted;
+use Nuxgame\LaravelDynamicDBFailover\Events\DBHealthCheckCommandFinished;
 
 class CheckDatabaseHealthCommand extends Command
 {
@@ -15,7 +18,8 @@ class CheckDatabaseHealthCommand extends Command
      * @var string
      */
     protected $signature = 'failover:health-check
-                             {connection? : The specific connection to check (optional). All if not specified.}';
+                             {connection? : The specific connection to check (optional). All if not specified.}
+                             {--dispatch-events= : Override config: Dispatch lifecycle events (true/false/1/0).}';
 
     /**
      * The console command description.
@@ -45,6 +49,24 @@ class CheckDatabaseHealthCommand extends Command
     }
 
     /**
+     * Determine if lifecycle events should be dispatched.
+     *
+     * @return bool
+     */
+    protected function shouldDispatchLifecycleEvents(): bool
+    {
+        $option = $this->option('dispatch-events');
+
+        if ($option !== null) {
+            // If option is provided, use its boolean value
+            return filter_var($option, FILTER_VALIDATE_BOOLEAN);
+        }
+
+        // Otherwise, use the config setting
+        return (bool) $this->config->get('dynamic_db_failover.dispatch_command_lifecycle_events', true);
+    }
+
+    /**
      * Execute the console command.
      *
      * This command checks the health of specified or configured database connections.
@@ -58,21 +80,45 @@ class CheckDatabaseHealthCommand extends Command
      */
     public function handle()
     {
-        Log::channel('db_health_checks')->info('Starting database health checks...');
+        $dispatchEvents = $this->shouldDispatchLifecycleEvents();
 
         $specificConnection = $this->argument('connection');
-        $connectionsToWatch = [];
+        $connectionsForStartEvent = [];
 
         if ($specificConnection) {
-            // Validate if the specific connection exists in the database configurations.
+            $connectionsForStartEvent[] = $specificConnection;
+        } else {
+            $primary = $this->config->get('dynamic_db_failover.connections.primary');
+            $failover = $this->config->get('dynamic_db_failover.connections.failover');
+            if ($primary) $connectionsForStartEvent[] = $primary;
+            if ($failover) $connectionsForStartEvent[] = $failover;
+        }
+        if ($dispatchEvents) {
+            Event::dispatch(new DBHealthCheckCommandStarted($connectionsForStartEvent));
+        }
+
+        $message = 'Starting database health checks...';
+        Log::channel('db_health_checks')->info($message);
+        $this->info($message);
+
+        $connectionsToWatch = [];
+        $processedConnections = [];
+
+        if ($specificConnection) {
             if (!$this->config->has("database.connections.{$specificConnection}")) {
-                Log::channel('db_health_checks')->error("Connection '{$specificConnection}' is not configured in your database settings.");
+                $errorMessage = "Connection '{$specificConnection}' is not configured in your database settings.";
+                Log::channel('db_health_checks')->error($errorMessage);
+                $this->error($errorMessage);
+                if ($dispatchEvents) {
+                    Event::dispatch(new DBHealthCheckCommandFinished($processedConnections, Command::FAILURE));
+                }
                 return Command::FAILURE;
             }
             $connectionsToWatch[] = $specificConnection;
-            Log::channel('db_health_checks')->info("Performing health check for specific connection: {$specificConnection}");
+            $message = "Performing health check for specific connection: {$specificConnection}";
+            Log::channel('db_health_checks')->info($message);
+            $this->info($message);
         } else {
-            // If no specific connection is given, check primary and failover connections from config.
             $primaryConnection = $this->config->get('dynamic_db_failover.connections.primary');
             $failoverConnection = $this->config->get('dynamic_db_failover.connections.failover');
 
@@ -82,35 +128,50 @@ class CheckDatabaseHealthCommand extends Command
             if ($failoverConnection) {
                 $connectionsToWatch[] = $failoverConnection;
             }
-
-            Log::channel('db_health_checks')->info('Performing health checks for configured primary and failover connections.');
+            $message = 'Performing health checks for configured primary and failover connections.';
+            Log::channel('db_health_checks')->info($message);
+            $this->info($message);
         }
 
         if (empty($connectionsToWatch)) {
-            Log::channel('db_health_checks')->warning('No connections configured or specified for health check.');
+            $warningMessage = 'No connections configured or specified for health check.';
+            Log::channel('db_health_checks')->warning($warningMessage);
+            $this->warn($warningMessage);
+            if ($dispatchEvents) {
+                Event::dispatch(new DBHealthCheckCommandFinished($processedConnections, Command::SUCCESS));
+            }
             return Command::SUCCESS;
         }
 
         foreach ($connectionsToWatch as $connectionName) {
-            // Skip if a connection name from config happens to be empty.
             if (empty($connectionName)) {
                 continue;
             }
+            $processedConnections[] = $connectionName;
 
-            Log::channel('db_health_checks')->info("Checking health of connection: {$connectionName}...");
+            $message = "Checking health of connection: {$connectionName}...";
+            Log::channel('db_health_checks')->info($message);
+            $this->info($message);
             try {
                 $this->stateManager->updateConnectionStatus($connectionName);
-                // The ConnectionStateManager itself might log detailed reasons for status changes (e.g., on health check failure).
-                // Here, we retrieve and display the resulting status and failure count.
                 $status = $this->stateManager->getConnectionStatus($connectionName);
                 $failures = $this->stateManager->getFailureCount($connectionName);
-                Log::channel('db_health_checks')->info("Connection '{$connectionName}' status: {$status->value}, Failures: {$failures}");
+                $message = "Connection '{$connectionName}' status: {$status->value}, Failures: {$failures}";
+                Log::channel('db_health_checks')->info($message);
+                $this->info($message);
             } catch (\Exception $e) {
-                Log::channel('db_health_checks')->error("Failed to check health for connection '{$connectionName}': " . $e->getMessage(), ['exception' => $e]);
+                $errorMessage = "Failed to check health for connection '{$connectionName}': " . $e->getMessage();
+                Log::channel('db_health_checks')->error($errorMessage, ['exception' => $e]);
+                $this->error($errorMessage);
             }
         }
 
-        Log::channel('db_health_checks')->info('Database health checks completed.');
+        $message = 'Database health checks completed.';
+        Log::channel('db_health_checks')->info($message);
+        $this->info($message);
+        if ($dispatchEvents) {
+            Event::dispatch(new DBHealthCheckCommandFinished($processedConnections, Command::SUCCESS));
+        }
         return Command::SUCCESS;
     }
 }
