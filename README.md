@@ -46,10 +46,14 @@ The service provider will be automatically registered.
     ```php
     'your_blocking_connection_name' => [
         'driver' => 'blocking',
-        'name' => 'your_blocking_connection_name',
-        // Other options like 'database', 'prefix' are ignored for blocking driver
+        // CRITICAL: No other parameters (host, port, database, username, password, etc.)
+        // should be defined here for the 'blocking' driver.
+        // The driver is designed to not establish a real database connection.
     ],
     ```
+
+    **Important Note on `.env` Configuration for the Blocking Connection:**
+    To prevent potential 502 errors or other issues when primary and failover databases are down, it is crucial **NOT** to define `DB_BLOCKING_HOST`, `DB_BLOCKING_PORT`, `DB_BLOCKING_DATABASE`, `DB_BLOCKING_USERNAME`, or `DB_BLOCKING_PASSWORD` variables in your `.env` file. The `DB_BLOCKING_CONNECTION` variable (which defines the name of your blocking connection, e.g., `mysql_blocking`) is sufficient. The 'blocking' driver does not use these host/port/etc. details, and their presence might lead Laravel to attempt a connection before the failover logic fully engages, causing errors.
 
 3.  **Update `config/dynamic_db_failover.php`:**
 
@@ -63,7 +67,7 @@ The service provider will be automatically registered.
             Possible values: `'everyMinute'`, `'everySecond'`, `'disabled'`. Default is `'everySecond'`. 
             If `'disabled'`, the package will not schedule the command, and you would need to schedule it manually if desired.
     *   `cache`:
-        *   `store`: The cache store to use for storing connection statuses (e.g., `redis`, `file`).
+        *   `store`: The cache store to use for storing connection statuses (e.g., `redis`, `memcached`, `file`). Successfully tested with `redis` and `memcached`.
         *   `prefix`: Prefix for cache keys.
         *   `ttl_seconds`: Time-to-live for connection status in cache.
 
@@ -134,7 +138,7 @@ The package dispatches the following events, allowing you to hook into its lifec
 
 *   **`Nuxgame\\LaravelDynamicDBFailover\\Events\\CacheUnavailableEvent`**
     *   Dispatched by `ConnectionStateManager` if there's an error accessing the cache for connection statuses.
-    *   Properties: `string $connectionName`, `string $method`, `\\Exception $exception`.
+    *   Properties: `\Exception $exception`.
 
 *   **`Nuxgame\\LaravelDynamicDBFailover\\Events\\DatabaseConnectionSwitchedEvent`** (Legacy)
     *   A generic event that was previously used for all connection switches. Listeners should prefer the more specific `SwitchedToPrimaryConnectionEvent` and `SwitchedToFailoverConnectionEvent`. While its direct dispatch from `DatabaseFailoverManager`'s main logic has been removed, it's kept for potential backward compatibility or direct usage.
@@ -144,17 +148,17 @@ You can listen for these events in your application to implement custom logic (e
 
 ## Testing
 
-To run the package's tests, navigate to your main project root and use the script (if available from the demo project setup):
-
+To run the package's tests, it's recommended to use the Makefile command if you are working within the provided demo project:
 ```bash
 make test-package
 ```
-Or, if you have the package pulled in as a standalone development dependency, you can run PHPUnit from its directory:
+This ensures the test environment is correctly set up.
+
+Alternatively, if you have the package as a standalone dependency or want to run tests directly from its directory:
 ```bash
-cd packages/nuxgame/laravel-dynamic-db-failover
-../../vendor/bin/phpunit
+cd packages/nuxgame/laravel-dynamic-db-failover # Or your path to the package
+../../vendor/bin/phpunit # Adjust path to your main project's phpunit
 ```
-(Adjust path to `phpunit` based on your main project's vendor directory).
 
 ## Contributing
 
