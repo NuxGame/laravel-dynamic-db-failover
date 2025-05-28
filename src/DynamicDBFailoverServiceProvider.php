@@ -134,24 +134,18 @@ class DynamicDBFailoverServiceProvider extends ServiceProvider
 
         // Determine and set the initial active database connection based on health checks.
         // This is crucial for the package to function correctly from the start of the application lifecycle.
-        if ($this->shouldRunFailoverLogic()) {
-             try {
-                /** @var DatabaseFailoverManager $failoverManager */
-                $failoverManager = $this->app->make(DatabaseFailoverManager::class);
-                $failoverManager->determineAndSetConnection();
-            } catch (\Exception $e) {
-                // Log a critical error if the DatabaseFailoverManager fails to initialize during boot.
-                // This could happen if, for example, the cache service is down and ConnectionStateManager
-                // cannot operate, or if there's a fundamental issue with DB configuration resolving.
-                // The application might be in an unstable state if this fails.
-                // For now, we log the error and allow the application to continue, which might mean
-                // it operates on Laravel's default connection without failover capabilities active.
-                logger()->critical(
-                    'DynamicDBFailover: Failed to initialize DatabaseFailoverManager during boot: ' . $e->getMessage(),
-                    ['exception' => $e]
-                );
-            }
-        }
+        // if ($this->shouldRunFailoverLogic()) {
+        //     try {
+        //        /** @var DatabaseFailoverManager $failoverManager */
+        //        $failoverManager = $this->app->make(DatabaseFailoverManager::class);
+        //        $failoverManager->determineAndSetConnection();
+        //    } catch (\Exception $e) {
+        //        logger()->critical(
+        //            'DynamicDBFailover: Failed to initialize DatabaseFailoverManager during boot: ' . $e->getMessage(),
+        //            ['exception' => $e]
+        //        );
+        //    }
+        // }
     }
 
     /**
